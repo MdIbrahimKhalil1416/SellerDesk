@@ -1,0 +1,12 @@
+# Used by tests annotated with @ActiveProfiles("test"). Dummy values only, no real secrets.
+
+spring:
+  mongodb:
+    # Overridden by Testcontainers (@ServiceConnection) in tests that start a real MongoDB.
+    # Short timeouts so tests without a database don't hang.
+    uri: mongodb://localhost:27017/sellerdesk-test?serverSelectionTimeoutMS=1000&connectTimeoutMS=1000
+
+sellerdesk:
+  frontend-url: http://localhost:5173
+  jwt:
+    secret: test-only-secret-test-only-secret-0123456789

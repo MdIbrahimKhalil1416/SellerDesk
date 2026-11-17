@@ -1,0 +1,17 @@
+# Local development. Active by default (spring.profiles.default=dev).
+
+management:
+  endpoint:
+    health:
+      # Shows MongoDB status in /actuator/health so you can see if Atlas is reachable.
+      show-details: always
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+logging:
+  level:
+    com.sellerdesk: DEBUG

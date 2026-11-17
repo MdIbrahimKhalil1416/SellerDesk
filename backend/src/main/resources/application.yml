@@ -1,0 +1,79 @@
+# Shared configuration for all profiles.
+# Secrets are NEVER written here: ${NAME} reads an environment variable
+# (or a key from the optional local .env file imported below).
+
+spring:
+  application:
+    name: sellerdesk-backend
+
+  # Load backend/.env for local development if it exists (properties format).
+  # Two paths so it works whether the working directory is backend/ or the repo root.
+  # Real environment variables always win over values in .env.
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:backend/.env[.properties]
+
+  # No profile chosen -> run as "dev". Production sets SPRING_PROFILES_ACTIVE=prod.
+  profiles:
+    default: dev
+
+  # Spring Boot 4 property names (spring.mongodb.*, not spring.data.mongodb.uri)
+  mongodb:
+    uri: ${MONGODB_URI}
+    database: ${MONGODB_DATABASE:sellerdesk}
+  data:
+    mongodb:
+      # Creates indexes declared with @Indexed / @CompoundIndex at startup (see docs/SCHEMA.md §10)
+      auto-index-creation: true
+
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=10000,expireAfterWrite=60s
+
+# Our own settings, bound to com.sellerdesk.common.config.AppProperties
+sellerdesk:
+  frontend-url: ${FRONTEND_URL}
+  jwt:
+    secret: ${JWT_SECRET}
+    access-token-ttl: ${JWT_ACCESS_TTL:PT15M}
+    refresh-token-ttl: ${JWT_REFRESH_TTL:P30D}
+
+server:
+  port: ${PORT:8080}
+  error:
+    # Our GlobalExceptionHandler builds error bodies; never leak internals.
+    include-stacktrace: never
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+  health:
+    # Mail server problems must not mark the whole app as DOWN.
+    mail:
+      enabled: false
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html

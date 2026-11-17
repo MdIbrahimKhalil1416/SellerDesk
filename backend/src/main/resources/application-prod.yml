@@ -1,0 +1,25 @@
+# Production. Activate with environment variable SPRING_PROFILES_ACTIVE=prod.
+# All secrets must be real environment variables on the server (no .env file).
+
+spring:
+  mail:
+    # No empty defaults in prod: the app refuses to start if these are missing.
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+
+management:
+  endpoint:
+    health:
+      show-details: never
+
+# API docs and Swagger UI are switched off in production.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+logging:
+  level:
+    root: INFO
+    com.sellerdesk: INFO
