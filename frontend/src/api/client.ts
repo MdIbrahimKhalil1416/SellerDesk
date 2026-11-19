@@ -1,5 +1,4 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
-import { API_BASE_URL } from '../lib/env'
 import type { TokenResponse } from '../types/auth'
 import { clearAccessToken, getAccessToken, setAccessToken } from './tokenStore'
 
@@ -17,13 +16,15 @@ export const REFRESH_PATH = '/api/v1/auth/refresh'
 /**
  * The one Axios instance for all backend calls.
  *
- * - `withCredentials: true`: the browser sends and stores the HttpOnly refresh cookie. Needed in
- *   prod, where the API is on another origin; harmless in dev (same origin via the Vite proxy).
+ * - No baseURL: every call uses a relative path (/api/...). The backend serves the app and the API
+ *   from one origin in prod; in dev the Vite proxy forwards /api to the backend. So the browser
+ *   always talks to a single origin: no CORS, and the refresh cookie is first-party.
+ * - `withCredentials: true`: makes sure the HttpOnly refresh cookie is sent and stored. On the same
+ *   origin browsers do this anyway; it is kept so behavior does not depend on a default.
  * - Request interceptor: adds `Authorization: Bearer <access token from memory>`.
  * - Response interceptor: on 401, refreshes once and retries the original request.
  */
 export const api = axios.create({
-  baseURL: API_BASE_URL,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
   timeout: 20_000,

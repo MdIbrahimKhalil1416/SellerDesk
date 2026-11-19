@@ -247,7 +247,8 @@ and a `code`.
 | Mail         | Spring Mail for OTP and staff invite emails. Sent after the DB work succeeds. |
 | Scheduling   | Enabled, no jobs needed in Phase 1 (OTP cleanup is done by a MongoDB TTL index). |
 | Docs         | springdoc-openapi: Swagger UI at `/swagger-ui.html`, disabled in `prod`. |
-| Health       | Actuator: only `/actuator/health` exposed publicly. |
+| Health       | Actuator: only `/actuator/health` exposed publicly; prod shows only `{"status":"UP"}`. |
+| Static files | `common/config/SpaWebConfig` serves the built React app: `/assets/**` cached 1 year, everything else `no-cache`, SPA routes → `index.html`. See §8. |
 | Time         | Store `Instant` (UTC). Frontend shows `Asia/Dhaka` time. |
 | Money        | Integer **poisha** (`long`, 1 BDT = 100 poisha). See `SCHEMA.md` §2. |
 
@@ -260,7 +261,8 @@ and a `code`.
 | `JWT_ACCESS_TTL`     | default `PT15M` |
 | `JWT_REFRESH_TTL`    | default `P30D` |
 | `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` | SMTP |
-| `FRONTEND_URL`       | CORS allowed origin |
+| `APP_URL`            | Public origin of the app (frontend + API); the refresh endpoint's `Origin` check. Dev default `http://localhost:5173` |
+| `PORT`               | HTTP port, set by Render; default `8080` |
 | `PLATFORM_ADMIN_EMAIL` | Seeds the single platform admin user at startup |
 
 ---
@@ -268,9 +270,47 @@ and a `code`.
 ## 7. Frontend (brief)
 
 - `frontend/src/features/<feature>/` mirrors backend modules (api calls, hooks, pages).
-- Axios instance with base URL `/api/v1`. Interceptor adds the access token; on `401`
-  `TOKEN_EXPIRED` it calls `/auth/refresh` once, then retries.
+- One Axios instance (`api/client.ts`) with **relative** paths (`/api/v1/...`) and no base URL:
+  the app and the API always share one origin. Interceptor adds the access token; on `401` it
+  calls `/auth/refresh` once, then retries. The frontend has no environment variables.
 - TanStack Query for all server data. Query keys start with the feature: `['orders', filters]`.
 - The access token is kept **in memory only**; the refresh token is an HttpOnly cookie
   (see `SECURITY.md` §2).
 - The UI hides buttons the user lacks permission for, but the backend is the real check.
+
+---
+
+## 8. Deployment: one service
+
+```
+Browser ──── https://sellerdesk.onrender.com (one origin) ────▶ Render web service
+                                                                one Docker image, one JAR
+   /api/**            → controllers (JSON; unknown path → JSON 404/401)
+   /actuator/health   → public status
+   /assets/**         → hashed JS/CSS/images, cached 1 year, immutable
+   other GET paths    → index.html (no-cache) → React Router
+                                   │
+                                   ▼
+                             MongoDB Atlas
+```
+
+- **Build:** the root `Dockerfile` has three stages: Node builds `frontend/` → Maven copies
+  `frontend/dist` into `src/main/resources/static/` and builds the jar (tests skipped; CI runs
+  them) → a small Java 21 JRE image runs the jar as a non-root user on `$PORT`.
+- **Why one service:** one origin means no CORS, a first-party `SameSite=Strict` refresh cookie
+  (works in Safari too), no API URL baked into the frontend, and frontend and backend can never
+  be deployed out of step.
+- **Request routing:** controllers always win. Then `SpaWebConfig`'s resource handlers: a real
+  file is served; a path that is not a backend path (`api/`, `actuator/`, Swagger) and has no
+  file extension falls back to `index.html`; everything else is a JSON 404 from
+  `GlobalExceptionHandler`.
+- **Caching:** Vite puts a content hash in every asset file name, so `/assets/**` can be cached
+  for a year. `index.html` is `no-cache`, so after a deploy the next page load picks up the new
+  asset names.
+- **Local dev:** two processes. Vite (`:5173`) serves the frontend with hot reload and proxies
+  `/api` to Spring Boot (`:8080`) with the `Host` header unchanged, so it is one origin as well.
+- **CI** (`.github/workflows/ci.yml`): backend `./mvnw verify` and the frontend build run in
+  parallel; only if both pass, the Docker image is built (not pushed) and smoke-tested against a
+  throwaway MongoDB.
+
+Step-by-step setup: `DEPLOYMENT.md`.

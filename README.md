@@ -1,7 +1,6 @@
 # SellerDesk
 
-[![Backend CI](https://github.com/MdIbrahimKhalil1416/SellerDesk/actions/workflows/backend-ci.yml/badge.svg?branch=main)](https://github.com/MdIbrahimKhalil1416/SellerDesk/actions/workflows/backend-ci.yml)
-[![Frontend CI](https://github.com/MdIbrahimKhalil1416/SellerDesk/actions/workflows/frontend-ci.yml/badge.svg?branch=main)](https://github.com/MdIbrahimKhalil1416/SellerDesk/actions/workflows/frontend-ci.yml)
+[![CI](https://github.com/MdIbrahimKhalil1416/SellerDesk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MdIbrahimKhalil1416/SellerDesk/actions/workflows/ci.yml)
 
 **Status: Phase 1 in progress.** Auth, shop registration, the multi-tenancy foundation and the
 auth pages are built. Staff, products, inventory, customers and orders are next.
@@ -27,24 +26,31 @@ one deployment, and each shop sees only its own data.
 | Backend | Java 21, Spring Boot 4, Maven, Spring Data MongoDB, Spring Security + JWT, Bean Validation, Spring Mail, Caffeine cache, Actuator, springdoc-openapi |
 | Frontend | React 19, TypeScript (strict), Vite, Tailwind CSS, React Router, Axios, TanStack Query |
 | Database | MongoDB Atlas (replica set, so multi-document transactions work) |
-| CI | GitHub Actions: backend build + Docker image build; frontend type check + lint + build |
-| Hosting | Render: backend as a Docker web service, frontend as a static site ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)) |
+| CI | GitHub Actions: backend tests, frontend type check + lint + build, then Docker image build + smoke test |
+| Hosting | Render: **one** Docker web service ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)) |
 
 ## Architecture
 
 ```
-Browser (React SPA)
-   │  Authorization: Bearer <access token>      + HttpOnly refresh cookie (auth endpoints only)
+Browser ── https://sellerdesk.onrender.com ── one origin for everything
+   │
    ▼
-Spring Boot API
-   JwtAuthenticationFilter → @PreAuthorize(permission) → Controller → Service → Repository → MongoDB Atlas
-   (verifies JWT, checks tokenVersion,
-    puts shopId into TenantContext)
+Render web service: one Docker image, one Spring Boot app
+   ├─ /api/**              REST API
+   │     JwtAuthenticationFilter → @PreAuthorize(permission) → Controller → Service → Repository ─▶ MongoDB Atlas
+   │     (verifies JWT, checks tokenVersion, puts shopId into TenantContext)
+   ├─ /actuator/health     public, status only (Render health check, UptimeRobot)
+   ├─ /assets/**           built JS/CSS/images, cached for a year (hashed file names)
+   └─ anything else        index.html (no-cache) → React Router picks the page
 ```
 
+- **Single-service deployment.** The root `Dockerfile` builds the React app, copies it into the
+  backend's static resources and builds one jar. Spring Boot serves the API and the app from the
+  same origin, so there is no CORS, no API URL to configure in the frontend, and the refresh
+  cookie is first-party (`SameSite=Strict`). Unknown `/api/**` paths still answer JSON `404`.
 - **Feature modules** in `com.sellerdesk.<feature>` (`auth`, `shop`, `staff`, `product`,
   `inventory`, `customer`, `order`), each with `controller / service / repository / dto / model`.
-  Shared code (security, errors, config) lives in `common`.
+  Shared code (security, errors, config, SPA serving) lives in `common`.
 - **Controllers return DTOs only**, validated with Bean Validation. All errors use one JSON
   format (`ApiError`) from a global exception handler.
 - **Auth:** email + password (BCrypt). An emailed 6-digit code verifies the email and resets
@@ -73,8 +79,12 @@ layers ([SECURITY.md §4](docs/SECURITY.md)):
 ## Run locally
 
 Prerequisites: Java 21, Node.js 24, a MongoDB Atlas cluster (the free M0 is enough).
+Docker is **not** needed locally: CI builds and tests the Docker image.
 
-### Backend (port 8080)
+Locally you run two processes. The browser only talks to the Vite dev server; Vite forwards
+`/api` to the backend. So the browser sees one origin, the same as in production.
+
+### 1. Backend (port 8080)
 
 ```bash
 cd backend
@@ -82,27 +92,25 @@ cp .env.example .env      # fill in the values (see "Environment variables" belo
 ./mvnw spring-boot:run    # dev profile; Swagger UI at http://localhost:8080/swagger-ui.html
 ```
 
-`backend/.env` is git-ignored. For local development set `FRONTEND_URL=http://localhost:5173`,
-and add real SMTP credentials, otherwise no verification codes arrive.
+`backend/.env` is git-ignored. Add real SMTP credentials, otherwise no verification codes
+arrive. `APP_URL` is optional in dev (default `http://localhost:5173`).
 
-### Frontend (port 5173)
+### 2. Frontend (port 5173)
 
 ```bash
 cd frontend
 npm install
-npm run dev               # http://localhost:5173
+npm run dev               # open http://localhost:5173
 ```
 
-Start the backend first. The Vite dev server proxies `/api` to `http://localhost:8080`, so the
-browser sees one origin and the refresh cookie works without CORS issues.
-Checks: `npm run typecheck`, `npm run lint`, `npm run build`.
+Start the backend first. Checks: `npm run typecheck`, `npm run lint`, `npm run build`.
 
 ## Tests
 
-All test commands run in `backend/`:
+All backend test commands run in `backend/`:
 
 ```bash
-./mvnw test                                  # unit + integration tests
+./mvnw verify                                # all tests + jar (the same command CI runs)
 ./mvnw test -Dtest='TenantIsolationTest*'    # one class
 ```
 
@@ -129,36 +137,39 @@ MONGODB_TEST_URI=mongodb+srv://<user>:<password>@<cluster-host>/sellerdesk-test?
 > run. Never point it at the production database, and do not share one test database between
 > people running tests at the same time.
 
-**CI:** GitHub Actions currently **builds without running tests** (`-DskipTests`), then builds
-the Docker image. Run the tests locally before pushing. When tests are switched back on in CI,
-they use Testcontainers (Docker is available on GitHub runners) and need no secrets.
+**CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push and pull request:
+
+1. `backend`: `./mvnw verify`. All tests run; integration tests use Testcontainers (GitHub
+   runners have Docker) and need no secrets.
+2. `frontend`: `npm ci`, type check, lint, build.
+3. `docker-image` (only if 1 and 2 passed): builds the root `Dockerfile` (not pushed), checks it
+   runs as non-root with Java 21, then starts it against a throwaway MongoDB and checks health,
+   SPA routes, cache headers and JSON 404s.
 
 ## Environment variables
 
 Names only: never commit values. Real values live in `backend/.env` (local, git-ignored) or in
-the Render dashboard. Templates: [backend/.env.example](backend/.env.example),
-[frontend/.env.example](frontend/.env.example).
+the Render dashboard. Template: [backend/.env.example](backend/.env.example).
+The frontend has **no** environment variables.
 
-| Variable | Used by | Required | Purpose |
-|----------|---------|----------|---------|
-| `SPRING_PROFILES_ACTIVE` | backend | prod | `prod` on Render (the Docker image defaults to it); `dev` locally |
-| `PORT` | backend | no | HTTP port; set by Render, default `8080` |
-| `MONGODB_URI` | backend | yes | Atlas connection string |
-| `MONGODB_DATABASE` | backend | no | database name, default `sellerdesk` |
-| `JWT_SECRET` | backend | yes | HMAC key for tokens, at least 32 random characters |
-| `JWT_ACCESS_TTL` | backend | no | access token lifetime, default `PT15M` |
-| `JWT_REFRESH_TTL` | backend | no | refresh token lifetime, default `P30D` |
-| `FRONTEND_URL` | backend | yes | frontend origin: CORS and the refresh-cookie Origin check |
-| `MAIL_HOST` | backend | no | SMTP host, default `smtp.gmail.com` |
-| `MAIL_PORT` | backend | no | SMTP port, default `587` |
-| `MAIL_USERNAME` | backend | yes in prod | SMTP user |
-| `MAIL_PASSWORD` | backend | yes in prod | SMTP password (e.g. a Gmail App Password) |
-| `MAIL_FROM` | backend | no | sender shown in emails |
-| `REFRESH_COOKIE_SAME_SITE` | backend | no | `Strict` / `Lax` / `None`; prod default `None` |
-| `REFRESH_COOKIE_SECURE` | backend | no | dev only; always `true` in prod |
-| `MONGODB_TEST_URI` | backend tests | no | integration test database (name ends with `-test`); never on Render |
-| `VITE_API_URL` | frontend build | prod | backend base URL, baked in at build time; empty in dev |
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `SPRING_PROFILES_ACTIVE` | prod | `prod` on Render (the Docker image defaults to it); `dev` locally (default) |
+| `PORT` | no | HTTP port; set by Render, default `8080` |
+| `APP_URL` | prod | public origin of the app, e.g. the Render URL; refresh Origin check. Dev default `http://localhost:5173` |
+| `MONGODB_URI` | yes | Atlas connection string |
+| `MONGODB_DATABASE` | no | database name, default `sellerdesk` |
+| `JWT_SECRET` | yes | HMAC key for tokens, at least 32 random characters |
+| `JWT_ACCESS_TTL` | no | access token lifetime, default `PT15M` |
+| `JWT_REFRESH_TTL` | no | refresh token lifetime, default `P30D` |
+| `MAIL_HOST` | no | SMTP host, default `smtp.gmail.com` |
+| `MAIL_PORT` | no | SMTP port, default `587` |
+| `MAIL_USERNAME` | prod | SMTP user |
+| `MAIL_PASSWORD` | prod | SMTP password (e.g. a Gmail App Password) |
+| `MAIL_FROM` | no | sender shown in emails |
+| `MONGODB_TEST_URI` | no | tests only: integration test database (name ends with `-test`); never on Render |
 
 ## Deployment
 
-Step-by-step instructions for Render and MongoDB Atlas: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Step-by-step instructions for Render, MongoDB Atlas and UptimeRobot:
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).

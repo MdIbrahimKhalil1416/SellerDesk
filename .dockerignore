@@ -1,0 +1,28 @@
+# Build context for the root Dockerfile. Only frontend/ sources and backend/{pom.xml,mvnw,.mvn,src}
+# are needed. Everything below is excluded: smaller context, and no local secrets in the image.
+
+# Secrets / local config: never inside an image (at any depth)
+**/.env
+**/.env.*
+!**/.env.example
+
+# Build output and dependencies (rebuilt inside the image)
+**/target/
+**/node_modules/
+frontend/dist/
+# A local copy of the frontend build must not replace the one built in stage 1
+backend/src/main/resources/static/
+
+# Git, CI, IDE, docs
+.git
+.github
+.idea
+**/.vscode/
+**/*.iml
+**/*.log
+docs/
+README.md
+CLAUDE.md
+render.yaml
+Dockerfile
+.dockerignore

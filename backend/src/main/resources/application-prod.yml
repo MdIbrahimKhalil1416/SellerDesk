@@ -11,13 +11,18 @@ management:
   endpoints:
     web:
       exposure:
-        # Only /actuator/health (and its liveness/readiness groups) is reachable over HTTP.
+        # Only /actuator/health is reachable over HTTP (SecurityConfig also denies /actuator/**).
+        # Public on purpose: Render's health check and UptimeRobot call it without a token.
         include: health
   endpoint:
     health:
-      # Public response is just {"status":"UP"}: no database names, disk space or versions.
+      # Public response is just {"status":"UP"} (or DOWN + 503): no database names, disk space,
+      # versions or group names.
       show-details: never
       show-components: never
+      # No liveness/readiness groups: they are for Kubernetes, and would add "groups" to the output.
+      probes:
+        enabled: false
 
 server:
   # Render's proxy terminates HTTPS and forwards the request over HTTP with X-Forwarded-* headers.
@@ -37,9 +42,8 @@ springdoc:
 
 sellerdesk:
   refresh-cookie:
-    # Frontend and API are on different Render subdomains = cross-site. See docs/SECURITY.md §2.
-    # With a custom domain (app.x.com + api.x.com) set REFRESH_COOKIE_SAME_SITE=Strict.
-    same-site: ${REFRESH_COOKIE_SAME_SITE:None}
+    # One service serves the app and the API, so the cookie is first-party. See docs/SECURITY.md §2.
+    same-site: Strict
     secure: true
 
 logging:

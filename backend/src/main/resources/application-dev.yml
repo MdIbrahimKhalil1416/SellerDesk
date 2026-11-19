@@ -13,10 +13,13 @@ springdoc:
     enabled: true
 
 sellerdesk:
+  # The browser opens the Vite dev server, which proxies /api to this backend: one origin.
+  # Not a secret, so a default is fine here. Override with APP_URL if you use another port.
+  app-url: ${APP_URL:http://localhost:5173}
   refresh-cookie:
-    # localhost:5173 -> localhost:8080 is the same site; plain http cannot use Secure cookies.
-    same-site: ${REFRESH_COOKIE_SAME_SITE:Strict}
-    secure: ${REFRESH_COOKIE_SECURE:false}
+    # Plain http on localhost cannot use Secure cookies.
+    same-site: Strict
+    secure: false
 
 logging:
   level:

@@ -12,6 +12,6 @@ spring:
       auto-index-creation: false
 
 sellerdesk:
-  frontend-url: http://localhost:5173
+  app-url: http://localhost:5173
   jwt:
     secret: test-only-secret-test-only-secret-0123456789

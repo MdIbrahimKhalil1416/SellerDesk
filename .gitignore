@@ -2,3 +2,6 @@
 .env
 .env.*
 !.env.example
+
+# Frontend build copied in by the Dockerfile; never commit it
+backend/src/main/resources/static/

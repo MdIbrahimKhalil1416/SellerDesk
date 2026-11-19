@@ -1,0 +1,167 @@
+name: CI
+
+# One workflow so the Docker job can wait for BOTH test jobs (needs: only works inside one workflow).
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # All backend tests. Integration tests get MongoDB from Testcontainers (Docker is installed on
+  # GitHub's Ubuntu runners). Same command as locally: cd backend && ./mvnw verify
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # Committed from Windows, so the executable bit may be missing.
+      - name: Make Maven wrapper executable
+        run: chmod +x mvnw
+
+      - name: Test and build
+        run: ./mvnw -B --no-transfer-progress verify
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  # Builds the same image Render builds from the root Dockerfile, so a broken Dockerfile fails here
+  # first (there is no Docker on the developer machine). Runs only after both jobs above passed.
+  # The image is NOT pushed anywhere. Then it starts the image against a throwaway MongoDB and
+  # checks the things that only exist in the real image: frontend inside the jar, cache headers,
+  # SPA fallback, prod health output.
+  docker-image:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      # Throwaway database for the smoke test only. Never the real Atlas database.
+      mongo:
+        image: mongo:8
+        ports:
+          - 27017:27017
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: sellerdesk:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check image user and Java version
+        run: |
+          user=$(docker image inspect sellerdesk:ci --format '{{.Config.User}}')
+          echo "Image user: $user"
+          test -n "$user" && test "$user" != "root"
+          version=$(docker run --rm --entrypoint java sellerdesk:ci -version 2>&1)
+          echo "$version"
+          echo "$version" | grep -q 'version "21'
+
+      # Dummy values only. PORT=9090 proves the app listens on $PORT, not a fixed 8080.
+      - name: Start container
+        run: |
+          docker run -d --name app --network host \
+            -e PORT=9090 \
+            -e APP_URL=http://localhost:9090 \
+            -e MONGODB_URI=mongodb://localhost:27017/sellerdesk-ci \
+            -e JWT_SECRET="$(openssl rand -base64 48)" \
+            -e MAIL_USERNAME=ci -e MAIL_PASSWORD=ci \
+            sellerdesk:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:9090/actuator/health >/dev/null 2>&1; then echo "Up after ${i}x2 s"; exit 0; fi
+            sleep 2
+          done
+          echo "App did not become healthy"; exit 1
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          base=http://localhost:9090
+          # Prints the HTTP status, saves headers and body for the checks below.
+          req() { curl -s -o body -D headers -w '%{http_code}' "$base$1"; }
+          header() { grep -i "^$1:" headers | tr -d '\r' | cut -d' ' -f2-; }
+
+          echo "--- /actuator/health: public, overall status only"
+          test "$(req /actuator/health)" = 200
+          jq -e '. == {"status":"UP"}' body
+
+          echo "--- other actuator endpoints are not public"
+          test "$(req /actuator/env)" = 401
+          test "$(req /actuator/info)" = 401
+
+          echo "--- / and SPA routes: index.html with no-cache"
+          for path in / /login /dashboard /orders/42; do
+            test "$(req $path)" = 200
+            grep -q '<div id="root">' body
+            header Cache-Control | grep -q 'no-cache'
+          done
+
+          echo "--- hashed assets: cached for a year"
+          asset=$(grep -o '/assets/[^"]*\.js' body | head -1)
+          echo "asset: $asset"
+          test "$(req "$asset")" = 200
+          header Cache-Control | grep -q 'max-age=31536000'
+
+          echo "--- API: JSON errors, never index.html"
+          test "$(req /api/v1/does-not-exist)" = 401
+          jq -e '.code == "UNAUTHORIZED"' body
+          test "$(req /assets/missing-abc.js)" = 404
+          jq -e '.status == 404' body
+
+          echo "--- Swagger is off in prod"
+          test "$(req /v3/api-docs)" = 404
+          test "$(req /swagger-ui.html)" = 404
+
+          echo "All smoke checks passed"
+
+      - name: Container logs
+        if: always()
+        run: docker logs app || true

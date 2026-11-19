@@ -284,8 +284,9 @@ public class AuthService {
      * @param origin the request's {@code Origin} header; {@code null} for non-browser clients
      */
     public AuthResult refresh(String refreshToken, String origin) {
-        // CSRF defense for SameSite=None cookies: a browser on another site always sends its Origin.
-        if (origin != null && !origin.equals(appProperties.frontendUrl())) {
+        // CSRF defense in depth (the cookie is already SameSite=Strict): a browser on another site
+        // always sends its Origin, and the only allowed one is our own (APP_URL).
+        if (origin != null && !origin.equals(appProperties.appUrl())) {
             throw new BusinessRuleException(HttpStatus.FORBIDDEN, INVALID_ORIGIN, "Request origin is not allowed");
         }
         if (refreshToken == null || refreshToken.isBlank()) {

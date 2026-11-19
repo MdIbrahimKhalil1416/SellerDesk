@@ -25,7 +25,7 @@ import org.springframework.test.web.servlet.MvcResult;
  */
 class AuthFlowIntegrationTest extends MongoIntegrationTestBase {
 
-    private static final String FRONTEND = "http://localhost:5173";
+    private static final String APP_URL = "http://localhost:5173";
 
     @Test
     void registerThenVerifyThenLoginThenUseAndRefreshToken() throws Exception {
@@ -85,8 +85,8 @@ class AuthFlowIntegrationTest extends MongoIntegrationTestBase {
                 .andExpect(jsonPath("$.phone").value("01712345678"))
                 .andExpect(jsonPath("$.settings.deliveryChargeInsideDhaka").value(6000));
 
-        // 9. Refresh with the cookie from the frontend's origin.
-        mockMvc.perform(post("/api/v1/auth/refresh").cookie(refreshCookie).header("Origin", FRONTEND))
+        // 9. Refresh with the cookie from the app's origin.
+        mockMvc.perform(post("/api/v1/auth/refresh").cookie(refreshCookie).header("Origin", APP_URL))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken").isNotEmpty());
 
@@ -111,7 +111,7 @@ class AuthFlowIntegrationTest extends MongoIntegrationTestBase {
         mockMvc.perform(get("/api/v1/shop").header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("INVALID_TOKEN"));
-        mockMvc.perform(post("/api/v1/auth/refresh").cookie(refreshCookie).header("Origin", FRONTEND))
+        mockMvc.perform(post("/api/v1/auth/refresh").cookie(refreshCookie).header("Origin", APP_URL))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("INVALID_REFRESH_TOKEN"));
     }

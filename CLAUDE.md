@@ -68,7 +68,7 @@ base classes and utilities.
   (never add `@SpringBootTest` + Testcontainers by hand). The base picks MongoDB from
   `MONGODB_TEST_URI` (name must end with `-test`), else Testcontainers, else skips; it deletes all
   documents before each test. Use `uniqueEmail(...)` / `uniqueName(...)` for test data.
-- Run all tests: `cd backend && ./mvnw verify` (same command as CI, `.github/workflows/backend-ci.yml`).
+- Run all tests: `cd backend && ./mvnw verify` (same command as CI, `.github/workflows/ci.yml`).
 - Never point `MONGODB_TEST_URI` at the real database.
 - **Every new tenant-owned module (staff, product, inventory, customer, order) must extend
   `TenantIsolationTest`** with its own `@Nested` class: another shop's record by id → `404`

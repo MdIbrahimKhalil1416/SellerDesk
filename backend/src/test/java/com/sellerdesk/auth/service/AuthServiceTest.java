@@ -435,7 +435,7 @@ class AuthServiceTest {
         user.setPermissions(EnumSet.of(Permission.ORDER_VIEW));
         when(userRepository.findById("u1")).thenReturn(Optional.of(user));
 
-        AuthService.AuthResult result = service.refresh(jwtService.generateRefreshToken("u1", 2), TestFixtures.FRONTEND_URL);
+        AuthService.AuthResult result = service.refresh(jwtService.generateRefreshToken("u1", 2), TestFixtures.APP_URL);
 
         AccessTokenClaims claims = jwtService.parseAccessToken(result.accessToken());
         assertThat(claims.role()).isEqualTo(Role.MODERATOR);

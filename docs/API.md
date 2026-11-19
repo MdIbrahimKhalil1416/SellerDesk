@@ -27,7 +27,7 @@ customer stats). Separate endpoints make each one easy to secure, document and t
 | POST | `/auth/login` | public | `{email, password}` → `200 {accessToken, expiresIn, user}` + refresh cookie. `401 INVALID_CREDENTIALS`, `403 EMAIL_NOT_VERIFIED`, `429 LOGIN_RATE_LIMITED`. |
 | POST | `/auth/password/forgot` | public | `{email}` → always `202 {message, resendAfterSeconds}`, same rules as resend (never `429`). Code sent in the background unless the account is unknown or `DISABLED`. |
 | POST | `/auth/password/reset` | public | `{email, code, newPassword}` → `204`. Password rules as registration (`400 VALIDATION_FAILED`). Increments `tokenVersion` (all sessions end), activates `INVITED` / `PENDING_VERIFICATION` users. `400 INVALID_OTP` (also for unknown/disabled emails). Log in afterwards. |
-| POST | `/auth/refresh` | refresh cookie | no body → `200 {accessToken, expiresIn}` + new refresh cookie. `401 INVALID_REFRESH_TOKEN` if cookie missing/invalid/old version. `403 INVALID_ORIGIN` if `Origin` is not `FRONTEND_URL`. |
+| POST | `/auth/refresh` | refresh cookie | no body → `200 {accessToken, expiresIn}` + new refresh cookie. `401 INVALID_REFRESH_TOKEN` if cookie missing/invalid/old version. `403 INVALID_ORIGIN` if `Origin` is present and not `APP_URL`. |
 | POST | `/auth/logout` | auth (Bearer) | no body → `204`, deletes the cookie (`Max-Age=0`), increments `tokenVersion`: every access and refresh token of the user stops working (all devices). |
 | GET | `/auth/me` | auth | → `{user, shop: {id, name, status}}`. `user` read fresh from the database. `shop` is `null` for `PLATFORM_ADMIN`. |
 

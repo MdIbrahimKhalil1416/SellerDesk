@@ -90,42 +90,41 @@ Why this split:
 
 ### Refresh cookie attributes per profile
 
+The browser always talks to **one origin**: in prod the Spring Boot service serves both the
+React app and the API (e.g. `https://sellerdesk.onrender.com`); in dev the Vite dev server
+(`http://localhost:5173`) proxies `/api` to the backend. So the refresh cookie is always a
+**first-party** cookie.
+
 | Profile | `SameSite` | `Secure` | Why |
 |---------|-----------|----------|-----|
-| dev | `Strict` | `false` | `localhost:5173` → `localhost:8080` is the **same site** (ports don't count), and plain `http` cannot carry `Secure` cookies. |
-| prod | `None` | `true` | Frontend and API run on different Render subdomains, which is **cross-site** (see below). Browsers only accept `SameSite=None` together with `Secure`. |
+| dev | `Strict` | `false` | Same origin through the Vite proxy; plain `http` cannot carry `Secure` cookies. |
+| prod | `Strict` | `true` | Same origin; HTTPS (Render terminates TLS). |
 
-Configured by `sellerdesk.refresh-cookie.same-site` / `.secure`
-(env `REFRESH_COOKIE_SAME_SITE`, `REFRESH_COOKIE_SECURE`). The app refuses to start with
-`SameSite=None` and `Secure=false`.
+Configured by `sellerdesk.refresh-cookie.same-site` / `.secure` in the profile YAML files (no
+environment variables). Only `Strict` or `Lax` are accepted: the app refuses to start with
+`SameSite=None`, which would let other sites make the browser send the cookie.
 
-**Frontend requirement:** every call to `/api/v1/auth/*` must send credentials
-(`axios` `withCredentials: true`, `fetch` `credentials: "include"`), otherwise the browser
-neither sends nor stores the cookie. CORS allows credentials for `FRONTEND_URL` only (never `*`).
+`Strict` does not break normal use: the cookie is sent by the app's own request to
+`/api/v1/auth/refresh`, which is a same-site request even when the user arrived from a link on
+Facebook. (`Strict` only withholds cookies on requests started by another site.)
 
-**Why Render subdomains are cross-site:** `onrender.com` is on the Public Suffix List, so
-`app.onrender.com` and `api.onrender.com` are two different *sites*, like two unrelated domains.
+**Frontend:** every call uses a relative `/api/...` path through `api/client.ts`. There is no
+API URL setting. `withCredentials: true` is kept so cookie handling does not depend on a default.
 
-**Known limitation:** Safari (and iOS browsers) block third-party cookies by default, and a
-`SameSite=None` cookie on a different site is a third-party cookie. Refresh can fail there:
-the user then has to log in again after a reload. Fix: a custom domain, e.g.
-`app.sellerdesk.com` + `api.sellerdesk.com`. That is the same site, so prod can switch to
-`SameSite=Strict` with no code change.
+### CSRF protection of the refresh cookie
 
-### CSRF and `SameSite=None`
-
-`SameSite=Strict` would stop other sites from making the browser send the cookie. With `None`
-the browser **does** attach it to a request that `evil.com` triggers. What that attacker can and
-cannot do, and how we limit it:
+Defense in depth; each line alone already blocks the attack:
 
 | Risk | Mitigation |
 |------|-----------|
-| `evil.com` posts to `/auth/refresh` | `Origin` check: the endpoint rejects any request whose `Origin` header is present and not `FRONTEND_URL` (`403 INVALID_ORIGIN`). Browsers always send `Origin` on cross-site POSTs. |
-| Attacker reads the new access token | Impossible: CORS lets only `FRONTEND_URL` read responses. The token is in the body, never in a cookie. |
+| `evil.com` makes the browser post to `/auth/refresh` | `SameSite=Strict`: the browser does not attach the cookie to requests started by another site. |
+| Same, in an old browser that ignores `SameSite` | `Origin` check: the endpoint rejects any request whose `Origin` header is present and not `APP_URL` (`403 INVALID_ORIGIN`). Browsers always send `Origin` on cross-site POSTs. |
+| Attacker reads the new access token | Impossible: there is no CORS configuration, so the browser never lets another site's JavaScript read our responses. The token is in the body, never in a cookie. |
 | Cookie sent to other endpoints | `Path=/api/v1/auth` limits it to auth endpoints. All other endpoints authenticate with the `Authorization` header only, which another site cannot set. |
 | Forced logout | `/auth/logout` requires the Bearer access token, not the cookie. |
 
-So even with `SameSite=None` the refresh cookie alone cannot be used to act as the user.
+`APP_URL` must match the browser's `Origin` exactly (`https`, host, no trailing slash). The app
+refuses to start if it is missing or not an origin. Dev default: `http://localhost:5173`.
 
 ### Signing
 
@@ -298,8 +297,8 @@ These run on every build, so a new endpoint or repository that breaks the rules 
 | Topic | Phase 1 approach |
 |-------|------------------|
 | HTTPS | Required in production (hosting / proxy terminates TLS). `Secure` cookie flag depends on it. |
-| CORS | Only `FRONTEND_URL` allowed, with credentials. |
-| CSRF | Not needed for Bearer-token endpoints. Refresh cookie protected by path + `Origin` check (+ `SameSite=Strict` where same-site), see §2. Spring CSRF disabled. |
+| CORS | **Off**: app and API share one origin (Vite proxy in dev). No CORS headers, so other sites' JavaScript cannot read responses. |
+| CSRF | Not needed for Bearer-token endpoints. Refresh cookie protected by `SameSite=Strict` + path + `Origin` check, see §2. Spring CSRF disabled. |
 | Sessions | Stateless (`SessionCreationPolicy.STATELESS`). |
 | Rate limits | Login, OTP request/verify (see §1). In-memory; per instance. |
 | Input | Bean Validation on all DTOs; max lengths on every string; max list sizes (items ≤ 50, variants ≤ 100). |
@@ -307,5 +306,8 @@ These run on every build, so a new endpoint or repository that breaks the rules 
 | Errors | No stack traces, class names or DB messages in responses. |
 | Logging | Never log passwords, password hashes, OTP codes, tokens, or the full `MONGODB_URI`. |
 | Responses | `passwordHash` never leaves the server: user DTOs have no such field. |
-| Actuator | Only `/actuator/health` public; everything else off. |
+| Actuator | Only `/actuator/health` exposed and public (status only, for Render and UptimeRobot); `SecurityConfig` denies every other `/actuator/**` path. |
+| URL rules | `/api/**` needs a token except the listed public auth endpoints. Every other path is the React app (static files, `index.html`) and public: it contains no data. New controllers must live under `/api/`. |
+| Static files | Served only from `classpath:/static/` (Spring's resource resolver blocks `../` tricks). Unknown `/api/**` paths and missing files → JSON 404, never `index.html`. |
+| Swagger | Off in prod (404): a public map of every endpoint helps attackers more than users. On in dev. |
 | Secrets | Environment variables only (see `ARCHITECTURE.md` §6). `.env` in `.gitignore`. |
