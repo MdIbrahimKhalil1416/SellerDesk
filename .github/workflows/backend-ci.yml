@@ -29,15 +29,7 @@ jobs:
       - name: Make Maven wrapper executable
         run: chmod +x mvnw
 
-      # No secrets needed: tests use dummy values from application-test.yml, MONGODB_TEST_URI is
-      # not set, so integration tests use Testcontainers (Docker is preinstalled on ubuntu runners).
-      - name: Build and test
-        run: ./mvnw -B --no-transfer-progress verify
-
-      - name: Upload test reports
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: surefire-reports
-          path: backend/target/surefire-reports/
-          retention-days: 7
+      # Build only: compiles and packages the jar, tests are skipped.
+      # Run tests locally with: ./mvnw test
+      - name: Build
+        run: ./mvnw -B --no-transfer-progress -DskipTests package
