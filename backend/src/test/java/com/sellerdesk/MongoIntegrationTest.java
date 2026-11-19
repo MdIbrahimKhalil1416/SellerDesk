@@ -3,32 +3,21 @@ package com.sellerdesk;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.sellerdesk.common.model.AuditableDocument;
+import com.sellerdesk.testsupport.MongoIntegrationTestBase;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.index.IndexInfo;
 import org.springframework.data.mongodb.core.mapping.Document;
-import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Full application context against a real MongoDB (Testcontainers).
- * Skipped automatically when Docker is not available on the machine.
+ * Basic checks against a real MongoDB: right database, auditing, and that the indexes from the
+ * model annotations exist (and survive the per-test cleanup, which deletes documents only).
  */
-@SpringBootTest
-@ActiveProfiles("test")
-@Import(TestcontainersConfiguration.class)
-@Testcontainers(disabledWithoutDocker = true)
-class MongoIntegrationTest {
-
-    @Autowired
-    private MongoTemplate mongoTemplate;
+class MongoIntegrationTest extends MongoIntegrationTestBase {
 
     @Test
-    void contextLoads() {
-        assertThat(mongoTemplate.getDb().getName()).isNotBlank();
+    void connectedToATestDatabase() {
+        assertThat(mongoTemplate.getDb().getName()).endsWith("-test");
     }
 
     @Test
@@ -37,6 +26,18 @@ class MongoIntegrationTest {
 
         assertThat(saved.getCreatedAt()).isNotNull();
         assertThat(saved.getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    void uniqueAndTtlIndexesExist() {
+        assertThat(mongoTemplate.indexOps("users").getIndexInfo())
+                .anySatisfy(index -> {
+                    assertThat(index.isUnique()).isTrue();
+                    assertThat(index.getIndexFields()).extracting(f -> f.getKey()).containsExactly("email");
+                });
+        assertThat(mongoTemplate.indexOps("otp_tokens").getIndexInfo())
+                .extracting(IndexInfo::getExpireAfter)
+                .anySatisfy(ttl -> assertThat(ttl).hasValueSatisfying(d -> assertThat(d).isZero()));
     }
 
     @Document("audit_probe")

@@ -23,6 +23,10 @@ import tools.jackson.databind.ObjectMapper;
  *   <li>{@link AuthenticationEntryPoint}: no valid login → 401</li>
  *   <li>{@link AccessDeniedHandler}: logged in but not allowed → 403</li>
  * </ul>
+ *
+ * <p>401 codes: {@code TOKEN_EXPIRED} (frontend should call /auth/refresh), {@code INVALID_TOKEN}
+ * (bad, revoked or tampered token: log in again), {@code UNAUTHORIZED} (no token sent).
+ * The reason is left in a request attribute by {@link JwtAuthenticationFilter}.
  */
 @Component
 @RequiredArgsConstructor
@@ -33,8 +37,19 @@ public class RestSecurityErrorHandler implements AuthenticationEntryPoint, Acces
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response,
                          AuthenticationException authException) throws IOException {
-        write(response, ApiError.of(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED",
-                "Authentication is required", request.getRequestURI()));
+        Object reason = request.getAttribute(JwtAuthenticationFilter.AUTH_ERROR_ATTRIBUTE);
+        ApiError body;
+        if (JwtAuthenticationFilter.TOKEN_EXPIRED.equals(reason)) {
+            body = ApiError.of(HttpStatus.UNAUTHORIZED, JwtAuthenticationFilter.TOKEN_EXPIRED,
+                    "Access token has expired", request.getRequestURI());
+        } else if (JwtAuthenticationFilter.INVALID_TOKEN.equals(reason)) {
+            body = ApiError.of(HttpStatus.UNAUTHORIZED, JwtAuthenticationFilter.INVALID_TOKEN,
+                    "Access token is invalid. Please log in again", request.getRequestURI());
+        } else {
+            body = ApiError.of(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED",
+                    "Authentication is required", request.getRequestURI());
+        }
+        write(response, body);
     }
 
     @Override

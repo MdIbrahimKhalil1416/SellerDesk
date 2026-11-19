@@ -54,6 +54,17 @@ base classes and utilities.
 ## Testing
 
 - Every feature needs unit tests for its business logic (service layer).
+- Tests that need a real MongoDB extend `com.sellerdesk.testsupport.MongoIntegrationTestBase`
+  (never add `@SpringBootTest` + Testcontainers by hand). The base picks MongoDB from
+  `MONGODB_TEST_URI` (name must end with `-test`), else Testcontainers, else skips; it deletes all
+  documents before each test. Use `uniqueEmail(...)` / `uniqueName(...)` for test data.
+- Run all tests: `cd backend && ./mvnw verify` (same command as CI, `.github/workflows/backend-ci.yml`).
+- Never point `MONGODB_TEST_URI` at the real database.
+- **Every new tenant-owned module (staff, product, inventory, customer, order) must extend
+  `TenantIsolationTest`** with its own `@Nested` class: another shop's record by id → `404`
+  (never 403) for every `{id}` endpoint, lists show only own data, a `shopId` in the request body
+  is ignored, and referenced ids from another shop → `404`. Use `assertHiddenFromOtherShop(...)`.
+  A module is not done until these cases pass.
 
 ## Working style
 

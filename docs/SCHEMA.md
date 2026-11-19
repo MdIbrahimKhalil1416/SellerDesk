@@ -80,13 +80,14 @@ One user belongs to **at most one shop** in Phase 1.
 |-------|------|-----|-------|
 | `_id` | ObjectId | Y | |
 | `email` | String | Y | lowercase; login identity |
+| `passwordHash` | String | N | BCrypt hash. Null while `INVITED` (staff set it via the password-reset flow). Never returned by the API. |
 | `name` | String | Y | |
 | `phone` | String | N | normalized |
 | `shopId` | ObjectId | N | required for all roles except `PLATFORM_ADMIN` (null) |
 | `role` | String | Y | `PLATFORM_ADMIN`, `SHOP_OWNER`, `MODERATOR`, `PACKER`, `ACCOUNTANT` |
 | `permissions` | Array\<String\> | Y | effective permissions; starts as role defaults (`SECURITY.md` §3) |
-| `status` | String | Y | `INVITED`, `ACTIVE`, `DISABLED` |
-| `tokenVersion` | Int32 | Y | starts `0`; incremented on logout / disable / role or permission change. Invalidates all tokens. |
+| `status` | String | Y | `PENDING_VERIFICATION` (registered, email not verified yet), `INVITED` (staff, no password yet), `ACTIVE`, `DISABLED`. Only `ACTIVE` users can log in. |
+| `tokenVersion` | Int32 | Y | starts `0`; incremented on logout / disable / role or permission change / password change. Invalidates all tokens. |
 | `invitedBy` | ObjectId | N | → `users._id` |
 | `lastLoginAt` | Date | N | |
 | `version`, `createdAt`, `updatedAt` | | Y | |
@@ -107,24 +108,29 @@ Deferred; the `shopId` claim design does not block adding it later.
 |-------|------|-----|-------|
 | `_id` | ObjectId | Y | |
 | `email` | String | Y | lowercase |
-| `purpose` | String | Y | `LOGIN` (only value in Phase 1; field kept for future flows) |
+| `purpose` | String | Y | `EMAIL_VERIFICATION`, `PASSWORD_RESET`. A code only works for its own purpose. |
 | `codeHash` | String | Y | BCrypt hash of the 6-digit code. Plain code is **never** stored. |
-| `attempts` | Int32 | Y | failed verify count; max 5 |
-| `expiresAt` | Date | Y | `createdAt + 5 min` |
+| `attempts` | Int32 | Y | verify tries so far; max 5. Incremented atomically **before** the code is compared. |
+| `expiresAt` | Date | Y | `createdAt + 10 min`. After this the code is rejected. |
+| `purgeAt` | Date | Y | `createdAt + 1 h`. TTL field: MongoDB deletes the document after this. |
 | `consumedAt` | Date | N | set when used successfully |
 | `createdAt` | Date | Y | |
 
 **Indexes:**
-- `{ expiresAt: 1 }` with **`expireAfterSeconds: 0`**: TTL index. MongoDB deletes the
-  document once `expiresAt` is in the past.
+- `{ purgeAt: 1 }` with **`expireAfterSeconds: 0`**: TTL index. MongoDB deletes the
+  document once `purgeAt` is in the past.
 - `{ email: 1, purpose: 1, createdAt: -1 }`: find latest OTP; count requests per hour for rate limiting.
 
+**Why two dates:** the "max 5 codes per hour" limit counts this collection's documents from the
+last hour. If MongoDB deleted a document at `expiresAt` (10 min), the count would forget it.
+So validity (`expiresAt`, checked by the service) and cleanup (`purgeAt`, TTL) are separate.
+
 **TTL limitation (important):** the TTL background job runs about **every 60 seconds** and
-can lag further under load. An expired OTP may still exist for a minute or more.
-So the TTL index is **only cleanup**. The service must always check
+can lag further under load. So the TTL index is **only cleanup**. The service always checks
 `expiresAt > now && consumedAt == null && attempts < 5` itself.
 
-When a new OTP is requested, older unconsumed OTPs for that email are deleted, so only one is valid.
+**Only the newest code counts:** verify always loads the latest document for
+`{email, purpose}`. Requesting a new code makes every older one useless without deleting it.
 
 ---
 

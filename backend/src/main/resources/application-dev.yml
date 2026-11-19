@@ -12,6 +12,12 @@ springdoc:
   swagger-ui:
     enabled: true
 
+sellerdesk:
+  refresh-cookie:
+    # localhost:5173 -> localhost:8080 is the same site; plain http cannot use Secure cookies.
+    same-site: ${REFRESH_COOKIE_SAME_SITE:Strict}
+    secure: ${REFRESH_COOKIE_SECURE:false}
+
 logging:
   level:
     com.sellerdesk: DEBUG

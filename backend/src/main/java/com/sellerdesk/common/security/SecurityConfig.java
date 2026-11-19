@@ -11,22 +11,33 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 /**
- * TEMPORARY security setup for the skeleton.
+ * Security rules for the whole API (docs/SECURITY.md).
  *
- * <p>Only health and API docs are public; every other URL returns 401 because no login
- * mechanism exists yet. The JWT filter and the auth endpoints are added in the auth step.
+ * <p>Two levels of checks:
+ * <ol>
+ *   <li><b>URL level</b> (here): public paths are open, everything else needs a valid access token.
+ *       Missing/invalid token → 401.</li>
+ *   <li><b>Method level</b> (on controllers): {@code @PreAuthorize("hasAuthority('ORDER_CREATE')")}.
+ *       Logged in but missing that permission → 403.</li>
+ * </ol>
  */
 @Configuration
 @EnableWebSecurity
-@EnableMethodSecurity // enables @PreAuthorize on controller methods (used from the auth step on)
+@EnableMethodSecurity // turns on @PreAuthorize
 @RequiredArgsConstructor
 public class SecurityConfig {
+
+    /** Cost factor 12 = 2^12 rounds, roughly 0.2-0.3 s per hash: slow for attackers, fine for one login. */
+    static final int BCRYPT_STRENGTH = 12;
 
     /**
      * Swagger UI needs three paths: the HTML page, its static files, and the JSON API description
@@ -39,10 +50,21 @@ public class SecurityConfig {
             "/swagger-ui/**",
             "/v3/api-docs",
             "/v3/api-docs/**",
+            // Public auth endpoints (docs/API.md §1). Listed one by one on purpose: a new auth
+            // endpoint such as logout must stay protected unless it is added here deliberately.
+            "/api/v1/auth/register-shop",
+            "/api/v1/auth/verify-email",
+            "/api/v1/auth/verify-email/resend",
+            "/api/v1/auth/login",
+            "/api/v1/auth/refresh",
+            "/api/v1/auth/password/forgot",
+            "/api/v1/auth/password/reset",
     };
 
     private final AppProperties appProperties;
     private final RestSecurityErrorHandler securityErrorHandler;
+    private final JwtService jwtService;
+    private final AppUserDetailsService userDetailsService;
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -58,12 +80,22 @@ public class SecurityConfig {
                 .formLogin(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)
                 .exceptionHandling(e -> e
-                        .authenticationEntryPoint(securityErrorHandler)
-                        .accessDeniedHandler(securityErrorHandler))
+                        .authenticationEntryPoint(securityErrorHandler) // 401
+                        .accessDeniedHandler(securityErrorHandler))     // 403
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_PATHS).permitAll()
-                        .anyRequest().authenticated());
+                        .anyRequest().authenticated())
+                // Our filter runs before Spring's (unused) username/password filter, i.e. early
+                // enough that the authorization checks after it see the logged-in user.
+                .addFilterBefore(new JwtAuthenticationFilter(jwtService, userDetailsService),
+                        UsernamePasswordAuthenticationFilter.class);
         return http.build();
+    }
+
+    /** Hashes passwords and OTP codes. BCrypt adds a random salt, so equal inputs give different hashes. */
+    @Bean
+    PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder(BCRYPT_STRENGTH);
     }
 
     /** Allows the frontend (FRONTEND_URL) and only it to call the API from the browser. */

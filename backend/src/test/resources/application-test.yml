@@ -5,6 +5,11 @@ spring:
     # Overridden by Testcontainers (@ServiceConnection) in tests that start a real MongoDB.
     # Short timeouts so tests without a database don't hang.
     uri: mongodb://localhost:27017/sellerdesk-test?serverSelectionTimeoutMS=1000&connectTimeoutMS=1000
+  data:
+    mongodb:
+      # Index creation at startup needs a running MongoDB. Tests without a database would fail
+      # to start, so it is off here and switched back on by tests that use Testcontainers.
+      auto-index-creation: false
 
 sellerdesk:
   frontend-url: http://localhost:5173

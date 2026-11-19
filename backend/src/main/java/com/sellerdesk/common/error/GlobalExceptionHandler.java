@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -33,6 +34,7 @@ public class GlobalExceptionHandler {
 
     static final String VALIDATION_FAILED = "VALIDATION_FAILED";
     static final String MALFORMED_REQUEST = "MALFORMED_REQUEST";
+    static final String UNAUTHORIZED = "UNAUTHORIZED";
     static final String FORBIDDEN = "FORBIDDEN";
     static final String DUPLICATE_KEY = "DUPLICATE_KEY";
     static final String CONCURRENT_MODIFICATION = "CONCURRENT_MODIFICATION";
@@ -47,6 +49,12 @@ public class GlobalExceptionHandler {
     }
 
     // ---- Validation (400) ---------------------------------------------------------------
+
+    /** Our own field rules checked in services. Same JSON as annotation-based validation. */
+    @ExceptionHandler(FieldValidationException.class)
+    ResponseEntity<ApiError> handleFieldValidation(FieldValidationException ex, HttpServletRequest request) {
+        return build(ex.getStatus(), ex.getCode(), ex.getMessage(), request, ex.getFieldErrors());
+    }
 
     /** {@code @Valid @RequestBody} failed. */
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -88,7 +96,17 @@ public class GlobalExceptionHandler {
                 "Request body is missing or is not valid JSON", request, List.of());
     }
 
-    // ---- Security (403) -----------------------------------------------------------------
+    // ---- Security (401 / 403) -----------------------------------------------------------
+
+    /**
+     * Code inside a controller or service needed a logged-in user but there was none
+     * (e.g. {@code CurrentUser.userId()} on a public endpoint). Normally the filter chain already
+     * answers 401 before the request gets here.
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    ResponseEntity<ApiError> handleAuthentication(AuthenticationException ex, HttpServletRequest request) {
+        return build(HttpStatus.UNAUTHORIZED, UNAUTHORIZED, "Authentication is required", request, List.of());
+    }
 
     /** Thrown by {@code @PreAuthorize} when the logged-in user lacks a permission. */
     @ExceptionHandler(AccessDeniedException.class)

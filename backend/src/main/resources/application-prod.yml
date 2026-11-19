@@ -19,6 +19,13 @@ springdoc:
   swagger-ui:
     enabled: false
 
+sellerdesk:
+  refresh-cookie:
+    # Frontend and API are on different Render subdomains = cross-site. See docs/SECURITY.md §2.
+    # With a custom domain (app.x.com + api.x.com) set REFRESH_COOKIE_SAME_SITE=Strict.
+    same-site: ${REFRESH_COOKIE_SAME_SITE:None}
+    secure: true
+
 logging:
   level:
     root: INFO

@@ -21,7 +21,7 @@ split internally into **feature modules**.
 ```
 com.sellerdesk
 ├── common      shared: security, tenant context, errors, base document, config
-├── auth        login (email OTP), JWT, users, otp_tokens
+├── auth        login (email + password, OTP for verification/reset), JWT, users, otp_tokens
 ├── shop        shop registration and settings
 ├── staff       invite / manage staff users, permissions
 ├── product     products and variants (catalog data)
@@ -44,7 +44,7 @@ Each module has: `controller`, `service`, `repository`, `dto`, `model`.
      │  └──► customer
      └─────► product
    staff ──► auth
-   auth  ──► shop          (only during shop registration)
+   auth  ──► shop          (shop registration, and the shop summary in /auth/me)
    all   ──► common
    ```
 
