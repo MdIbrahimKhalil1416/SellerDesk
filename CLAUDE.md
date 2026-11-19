@@ -11,6 +11,16 @@ and courier COD payments. See `docs/SCOPE.md` for what is in and out of scope.
 - `frontend/` — React, TypeScript, Vite, Tailwind CSS, React Router, Axios, TanStack Query
 - Database — MongoDB Atlas
 
+## Frontend structure
+
+`frontend/src/`: `api` (Axios instance + endpoint wrappers), `features/<feature>` (pages, hooks,
+components of one feature), `components` (shared UI), `layouts`, `routes`, `lib` (helpers),
+`types` (backend DTO / ApiError types).
+
+- All HTTP calls go through `api/client.ts` (`api` instance). Never call `axios` directly.
+- Access token only in memory (`api/tokenStore.ts`). Never use localStorage/sessionStorage for tokens.
+- Show backend errors with `getApiError` / `fieldErrorsOf` from `lib/apiError.ts`; switch on `code`.
+
 ## Backend package structure (feature-based)
 
 Base package: `com.sellerdesk.<feature>`

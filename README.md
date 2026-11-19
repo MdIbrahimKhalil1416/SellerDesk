@@ -4,9 +4,26 @@ Back-office SaaS for Bangladeshi Facebook (F-commerce) sellers: orders, inventor
 and courier COD payments. Multi-tenant: every shop's data is isolated.
 
 - `backend/` — Java 21, Spring Boot, MongoDB
+- `frontend/` — React, TypeScript, Vite, Tailwind CSS, React Router, Axios, TanStack Query
 - `docs/` — scope, architecture, schema, security and API design
 
 Setup, Docker image and deploy instructions will be added here later.
+
+## Running the frontend
+
+```bash
+cd frontend
+npm install
+npm run dev            # http://localhost:5173
+```
+
+- Start the backend first (port 8080). The Vite dev server proxies `/api` to it, so the browser
+  sees one origin and the refresh cookie just works.
+- The backend's `FRONTEND_URL` must be `http://localhost:5173` in dev (CORS and the refresh
+  Origin check). Otherwise refresh fails with `Invalid CORS request` / `403`.
+- Prod build: set `VITE_API_URL` to the backend URL (see `frontend/.env.example`), then
+  `npm run build`. Checks: `npm run typecheck`, `npm run lint`.
+- CI: `.github/workflows/frontend-ci.yml` runs `npm ci`, type check, lint and build.
 
 ## Running the tests
 
