@@ -8,11 +8,27 @@ spring:
     password: ${MAIL_PASSWORD}
 
 management:
+  endpoints:
+    web:
+      exposure:
+        # Only /actuator/health (and its liveness/readiness groups) is reachable over HTTP.
+        include: health
   endpoint:
     health:
+      # Public response is just {"status":"UP"}: no database names, disk space or versions.
       show-details: never
+      show-components: never
 
-# API docs and Swagger UI are switched off in production.
+server:
+  # Render's proxy terminates HTTPS and forwards the request over HTTP with X-Forwarded-* headers.
+  # This makes the app see the original scheme/host/client IP (needed for correct https URLs and,
+  # later, per-IP rate limiting). Safe only behind a proxy that sets these headers itself.
+  forward-headers-strategy: native
+
+# API docs and Swagger UI are switched off in production (the URLs answer 404).
+# Why: a public map of every endpoint and DTO helps attackers more than it helps us; the frontend
+# does not need it; and the "Try it out" button would be a second, unprotected client on the live
+# system. Developers use Swagger locally (dev profile). See docs/DEPLOYMENT.md.
 springdoc:
   api-docs:
     enabled: false

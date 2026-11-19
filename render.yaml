@@ -1,0 +1,65 @@
+# Render Blueprint: describes both SellerDesk services as code.
+# Optional: you can also create the services by hand in the dashboard (docs/DEPLOYMENT.md).
+# Secrets are NOT stored here: every `sync: false` value is typed into the Render dashboard.
+# Spec: https://render.com/docs/blueprint-spec
+
+services:
+  # ---- Backend API (Docker) ---------------------------------------------------------
+  - type: web
+    name: sellerdesk-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    region: singapore # closest Render region to Bangladesh
+    healthCheckPath: /actuator/health
+    autoDeploy: true
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DATABASE
+        value: sellerdesk
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false # e.g. https://sellerdesk-web.onrender.com (no trailing slash)
+      - key: MAIL_HOST
+        value: smtp.gmail.com
+      - key: MAIL_PORT
+        value: "587"
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+
+  # ---- Frontend (static site) -------------------------------------------------------
+  - type: web
+    name: sellerdesk-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeploy: true
+    # Single-page app: every path (e.g. /dashboard after a page refresh) serves index.html,
+    # and React Router shows the right page. Real files (assets/*.js) are still served as-is.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+    envVars:
+      - key: VITE_API_URL
+        sync: false # e.g. https://sellerdesk-api.onrender.com (no trailing slash, no /api)
