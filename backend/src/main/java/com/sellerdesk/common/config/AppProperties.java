@@ -19,7 +19,16 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 @ConfigurationProperties(prefix = "sellerdesk")
 public record AppProperties(
-        @NotBlank String frontendUrl,
+        /*
+         * Must look like a browser Origin: scheme + host (+ port), no path, no trailing slash.
+         * If FRONTEND_URL is not set, Spring keeps the text "${FRONTEND_URL}" as the value. Without
+         * this check the app starts anyway and CORS rejects every browser request with a plain
+         * "403 Invalid CORS request". With it, startup fails and names the missing setting.
+         */
+        @NotBlank
+        @Pattern(regexp = "https?://[^/\\s]+",
+                message = "must be the frontend origin, e.g. http://localhost:5173 (set FRONTEND_URL; no trailing slash)")
+        String frontendUrl,
         @Valid @NotNull Jwt jwt,
         @Valid @NotNull Mail mail,
         @Valid @NotNull RefreshCookie refreshCookie) {

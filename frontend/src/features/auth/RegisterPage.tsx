@@ -4,7 +4,7 @@ import { Alert } from '../../components/ui/Alert'
 import { Button } from '../../components/ui/Button'
 import { PasswordField } from '../../components/ui/PasswordField'
 import { TextField } from '../../components/ui/TextField'
-import { errorMessage, fieldErrorsOf, getApiError } from '../../lib/apiError'
+import { errorMessage, fieldErrorsOf, getApiError, httpStatusOf } from '../../lib/apiError'
 import { AuthHeader } from './AuthHeader'
 import { BD_MOBILE, isPasswordValid } from './passwordPolicy'
 import { PasswordRules } from './PasswordRules'
@@ -66,11 +66,15 @@ export function RegisterPage() {
           }),
         onError: (error) => {
           const apiError = getApiError(error)
-          if (apiError?.code === 'EMAIL_ALREADY_REGISTERED') {
+          const status = httpStatusOf(error)
+          // The only 409 this endpoint returns is EMAIL_ALREADY_REGISTERED (docs/API.md §1), so
+          // the status alone is enough, even if the body is missing or not an ApiError.
+          if (apiError?.code === 'EMAIL_ALREADY_REGISTERED' || status === 409) {
             setErrors({ email: 'An account with this email already exists. Try logging in.' })
           } else if (apiError?.code === 'VALIDATION_FAILED') {
             setErrors(fieldErrorsOf(error)) // backend field names = our field names
           } else {
+            // 429, network errors, timeouts and 5xx get their own message (lib/apiError.ts).
             setFormError(errorMessage(error))
           }
         },

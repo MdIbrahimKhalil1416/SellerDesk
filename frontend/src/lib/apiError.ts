@@ -20,11 +20,34 @@ export function getApiError(error: unknown): ApiError | null {
   return null
 }
 
-/** A message that is always safe to show. */
+/**
+ * HTTP status of a failed request, or null if no response arrived (offline, timeout, CORS block).
+ * Works even when the body is not an ApiError (e.g. a proxy's plain-text 429 or 502).
+ */
+export function httpStatusOf(error: unknown): number | null {
+  return axios.isAxiosError(error) ? (error.response?.status ?? null) : null
+}
+
+export const NETWORK_ERROR_MESSAGE = 'Cannot reach the server. Check your internet connection and try again.'
+export const TIMEOUT_MESSAGE = 'The server took too long to answer. Please try again.'
+export const RATE_LIMITED_MESSAGE = 'Too many attempts. Please wait a minute and try again.'
+
+/**
+ * A message that is always safe to show.
+ *
+ * Order: the backend's own ApiError message first (it is written for users), then messages based
+ * on what happened to the request (no response / timeout / 429 / 5xx), then `fallback`.
+ */
 export function errorMessage(error: unknown, fallback = 'Something went wrong. Please try again.'): string {
   const apiError = getApiError(error)
   if (apiError) return apiError.message
-  if (axios.isAxiosError(error) && !error.response) return 'Cannot reach the server. Check your internet connection.'
+  if (!axios.isAxiosError(error)) return fallback
+  if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return TIMEOUT_MESSAGE
+  if (!error.response) return NETWORK_ERROR_MESSAGE
+  const status = error.response.status
+  if (status === 429) return RATE_LIMITED_MESSAGE
+  // 502/503/504 come from the proxy or Render while the backend is down or waking up.
+  if (status >= 500) return 'The server is having a problem right now. Please try again in a minute.'
   return fallback
 }
 
