@@ -55,7 +55,8 @@ Each module has: `controller`, `service`, `repository`, `dto`, `model`.
    | `shops`           | `shop`      | |
    | `users`           | `auth`      | `staff` changes users via `UserService` |
    | `otp_tokens`      | `auth`      | |
-   | `products`        | `product`   | **except** `variants[].stock.*`, written only by `inventory` |
+   | `products`        | `product`   | **except** `variants[].stock.*`, written only by `inventory` (product only writes the zeros when a variant is created) |
+| `image_cleanup_tasks` | `common.storage` | Cloudinary files to delete; swept by a job across shops |
    | `stock_movements` | `inventory` | append-only |
    | `customers`       | `customer`  | order counters updated via `CustomerService` |
    | `orders`          | `order`     | |
@@ -264,6 +265,7 @@ and a `code`.
 | `APP_URL`            | Public origin of the app (frontend + API); the refresh endpoint's `Origin` check. Dev default `http://localhost:5173` |
 | `PORT`               | HTTP port, set by Render; default `8080` |
 | `PLATFORM_ADMIN_EMAIL` | Seeds the single platform admin user at startup |
+| `CLOUDINARY_URL`     | `cloudinary://<api_key>:<api_secret>@<cloud_name>` for product images. Required in prod. |
 
 ---
 

@@ -46,31 +46,48 @@ customer stats). Separate endpoints make each one easy to secure, document and t
 
 ## 3. Staff
 
+Full spec, errors and decisions: `docs/modules/STAFF.md`.
+
 | Method | Path | Auth | Request → Response |
 |--------|------|------|--------------------|
-| GET | `/staff` | `STAFF_MANAGE` | `?role=&status=` → page of `StaffResponse {id, name, email, phone, role, permissions, status, lastLoginAt}` (includes owner) |
-| POST | `/staff` | `STAFF_MANAGE` | `{email, name, phone?, role (MODERATOR/PACKER/ACCOUNTANT), permissions?}` → `201 StaffResponse` (status `INVITED`), sends invite email. `409 EMAIL_ALREADY_REGISTERED` if the email has any account. |
-| GET | `/staff/{userId}` | `STAFF_MANAGE` | → `StaffResponse` |
-| PATCH | `/staff/{userId}` | `STAFF_MANAGE` | `{name?, phone?, role?, permissions?}` → `StaffResponse`. Role change resets permissions to defaults unless `permissions` also given. Bumps `tokenVersion`. Not allowed on owner or self. |
-| PATCH | `/staff/{userId}/status` | `STAFF_MANAGE` | `{status: ACTIVE or DISABLED}` → `StaffResponse`. Disable bumps `tokenVersion`. Not allowed on owner or self. |
+| GET | `/staff` | `STAFF_MANAGE` | `?q=&role=&status=` (`ACTIVE`/`DISABLED`/`INVITED`/`EXPIRED`) → page of `StaffRow {kind (MEMBER/INVITATION), id, name, email, role, permissions, status, lastLoginAt, invitedAt, expiresAt, lastSentAt}`. Members (incl. owner) and pending invitations in one list. |
 | GET | `/staff/permissions` | `STAFF_MANAGE` | → `{permissions: [{code, description}], roleDefaults: {MODERATOR: [...], ...}}` (for the staff edit UI) |
+| GET | `/staff/{userId}` | `STAFF_MANAGE` | → `StaffResponse {id, name, email, phone, role, permissions, status, lastLoginAt, createdAt, invitedBy{id, name}}` |
+| PATCH | `/staff/{userId}` | `STAFF_MANAGE` | `{role?, permissions?}` → `StaffResponse`. Role change resets permissions to defaults unless `permissions` also given. Bumps `tokenVersion`. `403 OWNER_READ_ONLY` / `CANNOT_MODIFY_SELF` / `PERMISSION_NOT_GRANTABLE`. |
+| PATCH | `/staff/{userId}/status` | `STAFF_MANAGE` | `{status: ACTIVE or DISABLED}` → `StaffResponse`. Disable bumps `tokenVersion`. Not allowed on owner or self. |
+| POST | `/staff/invitations` | `STAFF_MANAGE` | `{email, role (MODERATOR/PACKER/ACCOUNTANT), permissions?}` → `201 InvitationResponse`, emails a link valid 7 days. `409 ALREADY_A_MEMBER` / `ALREADY_INVITED` / `EMAIL_ALREADY_REGISTERED`. |
+| POST | `/staff/invitations/{id}/resend` | `STAFF_MANAGE` | → `200 InvitationResponse`, new token (old link dies), new expiry. `429 INVITE_RESEND_TOO_SOON` / `INVITE_RESEND_LIMIT`, `409 INVITATION_NOT_PENDING`. |
+| DELETE | `/staff/invitations/{id}` | `STAFF_MANAGE` | → `204`. `409 INVITATION_NOT_PENDING`. |
+| POST | `/auth/invitations/preview` | public | `{token}` → `{email, shopName, role, inviterName, expiresAt}`. `400 INVALID_INVITATION` / `INVITATION_EXPIRED`. |
+| POST | `/auth/invitations/accept` | public | `{token, name, password}` → `200 {accessToken, expiresIn, user}` + refresh cookie. Creates the `ACTIVE` user. `400 INVALID_INVITATION` / `INVITATION_EXPIRED` / `VALIDATION_FAILED`, `409 EMAIL_ALREADY_REGISTERED`. |
 
 ---
 
 ## 4. Products
 
+Full spec, errors and decisions: `docs/modules/PRODUCT.md`.
+
 | Method | Path | Auth | Request → Response |
 |--------|------|------|--------------------|
-| GET | `/products` | `PRODUCT_VIEW` | `?q=` (name prefix or exact SKU) `&status=&category=` → page of `ProductSummary {id, name, category, status, variantCount, priceRange, totalAvailable, imageUrl}` |
-| POST | `/products` | `PRODUCT_EDIT` | `{name, description?, category?, imageUrls?, variants: [{sku, name, attributes?, price, costPrice?, lowStockThreshold?, initialStock?}]}` → `201 ProductResponse`. `initialStock > 0` writes an `INITIAL` movement. `409 SKU_ALREADY_EXISTS`. |
-| GET | `/products/{id}` | `PRODUCT_VIEW` | → `ProductResponse {id, name, description, category, imageUrls, status, variants: [{variantId, sku, name, attributes, price, costPrice*, lowStockThreshold, active, stock{onHand, reserved, available}}]}` (*only with `PRODUCT_EDIT`/`REPORT_VIEW`) |
-| PUT | `/products/{id}` | `PRODUCT_EDIT` | `{name, description?, category?, imageUrls?}` → `ProductResponse`. Product fields only. |
-| POST | `/products/{id}/variants` | `PRODUCT_EDIT` | `{sku, name, attributes?, price, costPrice?, lowStockThreshold?, initialStock?}` → `201 ProductResponse` |
-| PATCH | `/products/{id}/variants/{variantId}` | `PRODUCT_EDIT` | `{name?, attributes?, price?, costPrice?, lowStockThreshold?, active?}` → `ProductResponse`. SKU and stock cannot be changed here. |
-| PATCH | `/products/{id}/status` | `PRODUCT_EDIT` | `{status: ACTIVE or ARCHIVED}` → `ProductResponse`. Archived products cannot be added to new orders. |
+| GET | `/products` | `PRODUCT_VIEW` | `?q=` (name prefix or exact SKU) `&status=` (`ACTIVE` default / `ARCHIVED` / `ALL`) `&category=&sort=` → page of `ProductSummary {id, name, category, status, variantCount, priceRange{min, max}, totalAvailable*, coverImageUrl, updatedAt}` |
+| GET | `/products/lookup` | `PRODUCT_VIEW` or `ORDER_CREATE` | → `[ProductLookupItem {productId, name, coverImageUrl, variants[{variantId, sku, name, price}]}]`: active products and variants only, no stock, no cost price. Cached per shop, evicted on every product change. For the order form. |
+| GET | `/products/categories` | `PRODUCT_VIEW` | → `[{name, productCount}]` (autocomplete) |
+| GET | `/products/{id}` | `PRODUCT_VIEW` | → `ProductResponse {id, name, description, category, status, images[{id, url, width, height}], variants: [{variantId, sku, name, attributes, price, costPrice**, lowStockThreshold, active, stock{onHand, reserved, available}*}], version, createdAt, updatedAt}` |
+| POST | `/products` | `PRODUCT_EDIT` | `{name, description?, category?, variants: [{sku, name?, attributes?, price, costPrice?, lowStockThreshold?}]}` → `201 ProductResponse`. Stock starts at 0; opening stock is entered through Inventory. `409 SKU_ALREADY_EXISTS`. |
+| PUT | `/products/{id}` | `PRODUCT_EDIT` | `{name, description?, category?, version}` → `ProductResponse`. Product fields only. |
+| PATCH | `/products/{id}/status` | `PRODUCT_EDIT` | `{status: ACTIVE or ARCHIVED, version}` → `ProductResponse`. Archived products cannot be added to new orders. |
+| POST | `/products/{id}/variants` | `PRODUCT_EDIT` | `{sku, name?, attributes?, price, costPrice?, lowStockThreshold?, version}` → `201 ProductResponse` |
+| PATCH | `/products/{id}/variants/{variantId}` | `PRODUCT_EDIT` | `{name?, attributes?, price?, costPrice?, lowStockThreshold?, active?, version}` → `ProductResponse`. SKU and stock cannot be changed. |
+| POST | `/products/{id}/images` | `PRODUCT_EDIT` | multipart `file` (JPEG/PNG/WebP, ≤ 5 MB, ≤ 8 per product) → `201 ProductResponse`. `400 IMAGE_TYPE_NOT_ALLOWED`, `413 IMAGE_TOO_LARGE`, `409 IMAGE_LIMIT_REACHED`, `502 IMAGE_UPLOAD_FAILED`. |
+| DELETE | `/products/{id}/images/{imageId}` | `PRODUCT_EDIT` | → `ProductResponse`. File deleted from Cloudinary. |
+| PUT | `/products/{id}/images/order` | `PRODUCT_EDIT` | `{imageIds[], version}` → `ProductResponse`. First image = cover. |
+| DELETE | `/products/{id}` | `PRODUCT_EDIT` | → `204`. Only for products never used by an order or stock movement, else `409 PRODUCT_IN_USE` (archive instead). |
 
-Stock fields are never accepted by product endpoints (except `initialStock` on create). All
-other stock changes go through Inventory.
+`*` only with `STOCK_VIEW`. `**` only with `PRODUCT_EDIT` or `REPORT_VIEW`. `version` is the
+value the client loaded; a mismatch gives `409 CONCURRENT_MODIFICATION`.
+
+Product endpoints never accept stock fields. All stock changes, including opening stock, go
+through Inventory.
 
 ---
 

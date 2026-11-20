@@ -26,7 +26,7 @@ Login
       → correct password but PENDING_VERIFICATION → 403 EMAIL_NOT_VERIFIED
         (safe to reveal: the caller already proved they know the password)
 
-Forgot password (also used by invited staff to set their first password)
+Forgot password
 1. POST /auth/password/forgot {email}
       → always 202 with the same message, whether or not the email has an account
         (so attackers cannot discover which emails are registered)
@@ -37,9 +37,10 @@ Forgot password (also used by invited staff to set their first password)
       → 204; the user then logs in normally
 ```
 
-Staff never self-register. A shop owner (or anyone with `STAFF_MANAGE`) creates them as
-`INVITED` with no password; the invite email points them to "set password", which is the
-forgot-password flow above.
+Staff never self-register. A shop owner (or anyone with `STAFF_MANAGE`) sends an invitation
+(`staff_invitations`, no user yet). The email link carries a one-time token; on the accept page
+the person sets name and password, the `ACTIVE` user is created and logged in.
+Details: `docs/modules/STAFF.md`.
 
 ### Password rules
 
@@ -227,11 +228,12 @@ Rules:
 - Nobody can assign `SHOP_OWNER` or `PLATFORM_ADMIN` through the staff API, and nobody can
   edit or disable the owner.
 - A user cannot change their own role or permissions (prevents self-escalation).
+- A non-owner with `STAFF_MANAGE` can only grant permissions they have themselves.
 - `PLATFORM_ADMIN`: seeded from `PLATFORM_ADMIN_EMAIL` at startup, no `shopId`, **no shop
   permissions**. All shop endpoints return `403` for it. Platform endpoints are Phase 2+.
 - Permissions are defined in one Java `enum`; role defaults in one place in `common.security`.
 - Cost prices (`costPrice`) are only included in product responses when the user has
-  `REPORT_VIEW` or `PRODUCT_EDIT`.
+  `REPORT_VIEW` or `PRODUCT_EDIT`. Stock numbers in product responses only with `STOCK_VIEW`.
 
 ---
 
@@ -243,7 +245,7 @@ Defense in layers. Each layer alone should be enough; together they make mistake
 |---|-------|-----------|
 | 1 | Source of truth | `shopId` only from the verified JWT → `TenantContext`. |
 | 2 | Input | Request DTOs have no `shopId` field. URLs have no `shopId`. |
-| 3 | Repository API | Tenant repositories extend `Repository<T, ID>`, **not** `MongoRepository`. Only methods with a `shopId` parameter exist (`findByIdAndShopId`, `findAllByShopId`...). No inherited `findById`/`findAll`. |
+| 3 | Repository API | Tenant repositories extend `Repository<T, ID>`, **not** `MongoRepository`. Only methods with a `shopId` parameter exist (`findByIdAndShopId`, `findAllByShopId`...). No inherited `findById`/`findAll`. Only exception: the image cleanup repository in `common.storage`, which sweeps all shops but holds only Cloudinary file ids. |
 | 4 | Custom queries | `MongoTemplate` queries start from `TenantCriteria.of(shopId)`. |
 | 5 | Writes | Service sets `entity.shopId` from context on create. Updates filter by `{_id, shopId}`. |
 | 6 | Cross-reference checks | When an order references a `customerId` / `variantId`, the service loads it **with the same `shopId`**. A valid id from another shop → `404`. |
@@ -284,7 +286,7 @@ Defense in layers. Each layer alone should be enough; together they make mistake
 ### c) Architecture tests (ArchUnit)
 - Classes in `..repository..` of tenant modules must not be assignable to `MongoRepository`
   / `CrudRepository`.
-- Every method in a tenant repository must have a parameter named `shopId`.
+- Every method in a tenant repository must have a parameter named `shopId` (the `common.storage` cleanup repository is excluded, see §4).
 - Controllers must not return types from `..model..` packages.
 - `..controller..` must not depend on `..repository..`.
 

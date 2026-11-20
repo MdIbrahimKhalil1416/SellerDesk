@@ -105,6 +105,7 @@ dashboard offers it.
 | `MAIL_USERNAME` | the Gmail address | **yes** |
 | `MAIL_PASSWORD` | the Gmail **App Password** (16 characters, no spaces) | **yes** |
 | `MAIL_FROM` | `SellerDesk <the same Gmail address>` (Gmail rewrites other senders) | no |
+| `CLOUDINARY_URL` | from the Cloudinary console (Dashboard → API environment variable): `cloudinary://<api_key>:<api_secret>@<cloud_name>`. Use a separate Cloudinary account or folder from dev. Needed once the product module is deployed. | **yes** |
 
 Optional: `JWT_ACCESS_TTL` (default `PT15M`), `JWT_REFRESH_TTL` (default `P30D`).
 

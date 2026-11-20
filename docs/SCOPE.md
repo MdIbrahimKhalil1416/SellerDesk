@@ -17,6 +17,8 @@
 
 ### Product with variants
 - Products with variants (e.g. size, color), each variant with its own SKU and price.
+- Product images uploaded through the backend to Cloudinary (max 8 per product).
+- Archive products; delete only products never used.
 
 ### Inventory
 - Stock per variant tracked as:
