@@ -106,7 +106,37 @@ class GlobalExceptionHandlerTest {
                 .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
     }
 
+    @Test
+    void uploadOverMultipartLimitReturns413ImageTooLarge() throws Exception {
+        mockMvc.perform(get("/fake/upload-too-large"))
+                .andExpect(status().is(413))
+                .andExpect(jsonPath("$.code").value("IMAGE_TOO_LARGE"));
+    }
+
+    @Test
+    void appExceptionWithFieldErrorsKeepsThemAlsoForNon400() throws Exception {
+        mockMvc.perform(get("/fake/conflict-with-field"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SKU_ALREADY_EXISTS"))
+                .andExpect(jsonPath("$.fieldErrors[0].field").value("variants[2].sku"));
+    }
+
+    @Test
+    void fieldValidationExceptionReturns400WithItsField() throws Exception {
+        mockMvc.perform(get("/fake/field-rule"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors[0].field").value("sort"));
+    }
+
     // ---- Fake controller used only by this test ----
+
+    static class FakeConflict extends AppException {
+        FakeConflict() {
+            super(org.springframework.http.HttpStatus.CONFLICT, "SKU_ALREADY_EXISTS", "taken",
+                    java.util.List.of(new ApiError.FieldError("variants[2].sku", "SKU X already exists")));
+        }
+    }
 
     record FakeRequest(@NotBlank String name, @Min(1) int quantity) {
     }
@@ -137,6 +167,21 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/fake/duplicate")
         String duplicate() {
             throw new DuplicateKeyException("E11000 duplicate key error: secret internal details");
+        }
+
+        @GetMapping("/fake/upload-too-large")
+        String uploadTooLarge() {
+            throw new org.springframework.web.multipart.MaxUploadSizeExceededException(5 * 1024 * 1024);
+        }
+
+        @GetMapping("/fake/conflict-with-field")
+        String conflictWithField() {
+            throw new FakeConflict();
+        }
+
+        @GetMapping("/fake/field-rule")
+        String fieldRule() {
+            throw new FieldValidationException("sort", "unknown sort");
         }
 
         @GetMapping("/fake/boom")

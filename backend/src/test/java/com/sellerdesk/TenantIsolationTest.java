@@ -2,8 +2,12 @@ package com.sellerdesk;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.clearInvocations;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -11,7 +15,9 @@ import com.sellerdesk.common.config.AppProperties;
 import com.sellerdesk.common.security.JwtService;
 import com.sellerdesk.common.security.Role;
 import com.sellerdesk.common.security.TenantContext;
+import com.sellerdesk.product.ProductTestApi;
 import com.sellerdesk.testsupport.MongoIntegrationTestBase;
+import com.sellerdesk.testsupport.TestImages;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -26,6 +32,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
@@ -330,10 +337,122 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
      * }
      * }</pre>
      *
-     * Modules still to add: Staff, Products, Inventory, Customers, Orders.
+     * Modules still to add: Staff, Inventory, Customers, Orders. Done: {@link Products}.
      */
     @Nested
     class CrossTenantById {
+    }
+
+    // ==== 7. Products ==================================================================
+
+    @Nested
+    class Products {
+
+        private ProductTestApi api;
+        private String productOfB;
+        private String variantOfB;
+        private String imageOfB;
+
+        @BeforeEach
+        void shopBHasAProductWithAnImage() throws Exception {
+            api = new ProductTestApi(mockMvc);
+            String created = api.createOk(shopB.bearer(), ProductTestApi.productJson("Beta Tee", "B Category", "B-SKU-1"));
+            productOfB = ProductTestApi.id(created);
+            variantOfB = ProductTestApi.variantId(created, 0);
+            imageOfB = ProductTestApi.imageId(api.uploadOk(shopB.bearer(), productOfB), 0);
+        }
+
+        @Test
+        void otherShopsProductIsNotFoundOnEveryIdEndpoint() throws Exception {
+            org.bson.Document before = productDocument(productOfB);
+            assertHiddenFromOtherShop("/api/v1/products/" + productOfB);
+
+            String json = MediaType.APPLICATION_JSON_VALUE;
+            assertNotFoundForA(put("/api/v1/products/{id}", productOfB).contentType(json)
+                    .content("{\"name\":\"Hacked\",\"version\":1}"));
+            assertNotFoundForA(patch("/api/v1/products/{id}/status", productOfB).contentType(json)
+                    .content("{\"status\":\"ARCHIVED\",\"version\":1}"));
+            assertNotFoundForA(post("/api/v1/products/{id}/variants", productOfB).contentType(json)
+                    .content("{\"sku\":\"HACK-1\",\"price\":1,\"version\":1}"));
+            assertNotFoundForA(patch("/api/v1/products/{id}/variants/{v}", productOfB, variantOfB).contentType(json)
+                    .content("{\"price\":1,\"version\":1}"));
+            assertNotFoundForA(multipart("/api/v1/products/{id}/images", productOfB)
+                    .file(new MockMultipartFile("file", "a.png", "image/png", TestImages.png())));
+            assertNotFoundForA(delete("/api/v1/products/{id}/images/{imageId}", productOfB, imageOfB));
+            assertNotFoundForA(put("/api/v1/products/{id}/images/order", productOfB).contentType(json)
+                    .content("{\"imageIds\":[\"" + imageOfB + "\"],\"version\":1}"));
+            assertNotFoundForA(delete("/api/v1/products/{id}", productOfB));
+
+            assertThat(productDocument(productOfB)).isEqualTo(before);
+            assertThat(imageStorage.uploads()).hasSize(1); // only B's own upload
+            assertThat(imageStorage.deletes()).isEmpty();
+        }
+
+        @Test
+        void variantAndImageIdsOfShopBAreNotFoundOnShopAsProduct() throws Exception {
+            String productOfA = ProductTestApi.id(api.createOk(shopA.bearer(), "Alpha Tee", "A-SKU-1"));
+            String json = MediaType.APPLICATION_JSON_VALUE;
+
+            assertNotFoundForA(patch("/api/v1/products/{id}/variants/{v}", productOfA, variantOfB).contentType(json)
+                    .content("{\"price\":1,\"version\":0}"));
+            assertNotFoundForA(delete("/api/v1/products/{id}/images/{imageId}", productOfA, imageOfB));
+            assertThat(imageStorage.deletes()).isEmpty();
+        }
+
+        @Test
+        void listsLookupAndCategoriesShowOnlyOwnProducts() throws Exception {
+            api.createOk(shopA.bearer(), ProductTestApi.productJson("Alpha Tee", "A Category", "A-SKU-1"));
+            // B also has a product whose name and SKU would match A's searches.
+            api.createOk(shopB.bearer(), ProductTestApi.productJson("Alpha Bravo", "A Category", "SHARED-Q"));
+
+            String all = body(get("/api/v1/products?status=ALL").header("Authorization", shopA.bearer()));
+            assertThat(all).contains("Alpha Tee").doesNotContain("Beta Tee").doesNotContain("Alpha Bravo");
+            String byName = body(get("/api/v1/products?q=alpha").header("Authorization", shopA.bearer()));
+            assertThat(byName).contains("Alpha Tee").doesNotContain("Alpha Bravo");
+            String bySku = body(get("/api/v1/products?q=SHARED-Q").header("Authorization", shopA.bearer()));
+            assertThat(bySku).contains("\"totalElements\":0");
+            String bySkuOfB = body(get("/api/v1/products?q=B-SKU-1").header("Authorization", shopA.bearer()));
+            assertThat(bySkuOfB).contains("\"totalElements\":0");
+
+            String lookup = body(get("/api/v1/products/lookup").header("Authorization", shopA.bearer()));
+            assertThat(lookup).contains("Alpha Tee").doesNotContain("Beta Tee").doesNotContain("Alpha Bravo");
+            String categories = body(get("/api/v1/products/categories").header("Authorization", shopA.bearer()));
+            assertThat(categories).contains("A Category").doesNotContain("B Category").contains("\"productCount\":1");
+        }
+
+        @Test
+        void shopIdInCreateAndUpdateBodyIsIgnored() throws Exception {
+            String created = api.createOk(shopA.bearer(), """
+                    {"name":"Sneaky","shopId":"%s","variants":[{"sku":"SNEAK-1","price":100,"shopId":"%s"}]}"""
+                    .formatted(shopB.shopId(), shopB.shopId()));
+            String productId = ProductTestApi.id(created);
+            assertThat(productDocument(productId).get("shopId")).isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+
+            mockMvc.perform(put("/api/v1/products/{id}", productId).header("Authorization", shopA.bearer())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"name\":\"Still A\",\"shopId\":\"%s\",\"version\":0}".formatted(shopB.shopId())))
+                    .andExpect(status().isOk());
+            assertThat(productDocument(productId).get("shopId")).isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+            mockMvc.perform(get("/api/v1/products/{id}", productId).header("Authorization", shopB.bearer()))
+                    .andExpect(status().isNotFound());
+        }
+
+        @Test
+        void skuOwnedByShopBDoesNotBlockShopA() throws Exception {
+            api.createOk(shopA.bearer(), "Same SKU in A", "B-SKU-1");
+        }
+
+        private void assertNotFoundForA(org.springframework.test.web.servlet.request.AbstractMockHttpServletRequestBuilder<?> request) throws Exception {
+            String body = mockMvc.perform(request.header("Authorization", shopA.bearer()))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain(shopB.shopId()).doesNotContain("Beta Tee");
+        }
+
+        private org.bson.Document productDocument(String productId) {
+            return mongoTemplate.findById(new org.bson.types.ObjectId(productId), org.bson.Document.class, "products");
+        }
     }
 
     // ---- helpers ----------------------------------------------------------------------

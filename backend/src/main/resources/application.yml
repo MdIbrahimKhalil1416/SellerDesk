@@ -45,6 +45,13 @@ spring:
     resources:
       add-mappings: false
 
+  # Image uploads (docs/modules/PRODUCT.md §4). Bigger files are rejected with 413 IMAGE_TOO_LARGE
+  # while the request is read, before they reach a controller.
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+
   cache:
     type: caffeine
     caffeine:
@@ -65,6 +72,11 @@ sellerdesk:
   refresh-cookie:
     same-site: Strict
     secure: true
+  # Product images. CLOUDINARY_URL = cloudinary://<api_key>:<api_secret>@<cloud_name> (a secret).
+  # Empty is allowed in dev (uploads then answer 502); prod requires it (application-prod.yml).
+  cloudinary:
+    url: ${CLOUDINARY_URL:}
+    required: false
 
 server:
   port: ${PORT:8080}

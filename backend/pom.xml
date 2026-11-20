@@ -18,6 +18,7 @@
 		<!-- Not managed by Spring Boot, so versions are pinned here -->
 		<springdoc.version>3.2.0</springdoc.version>
 		<jjwt.version>0.13.0</jjwt.version>
+		<cloudinary.version>2.6.0</cloudinary.version>
 	</properties>
 	<dependencies>
 		<!-- OpenAPI docs + Swagger UI -->
@@ -44,6 +45,13 @@
 			<artifactId>jjwt-jackson</artifactId>
 			<version>${jjwt.version}</version>
 			<scope>runtime</scope>
+		</dependency>
+
+		<!-- Product images. The -http5 flavour uses Apache HttpClient 5 for the network calls. -->
+		<dependency>
+			<groupId>com.cloudinary</groupId>
+			<artifactId>cloudinary-http5</artifactId>
+			<version>${cloudinary.version}</version>
 		</dependency>
 
 		<!-- In-memory cache with expiry (TTL), used by spring-boot-starter-cache -->

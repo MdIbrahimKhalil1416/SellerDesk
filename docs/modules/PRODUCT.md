@@ -4,7 +4,7 @@ The shop's catalog: products with embedded variants (size, color...), each varia
 own SKU and prices, plus product images stored in Cloudinary. Stock numbers live inside the
 variants but are **owned by the Inventory module**; this module never changes them.
 
-Status: **spec, not built**. Backend package `com.sellerdesk.product` (+ `common.storage` for
+Status: **backend built** (frontend not yet). Backend package `com.sellerdesk.product` (+ `common.storage` for
 images), frontend `features/products`.
 
 Related: `API.md` §4 (endpoint summary), `SCHEMA.md` §6 (`products`), `SECURITY.md` §3
@@ -226,7 +226,7 @@ form gets `409 CONCURRENT_MODIFICATION` instead of overwriting someone else's ch
 | Delete a used product | 409 | `PRODUCT_IN_USE` |
 | `version` does not match | 409 | `CONCURRENT_MODIFICATION` |
 | Product / variant / image id unknown **or from another shop** | 404 | `NOT_FOUND` |
-| Missing permission | 403 | `ACCESS_DENIED` |
+| Missing permission | 403 | `FORBIDDEN` (existing security handler code) |
 
 ---
 

@@ -15,3 +15,7 @@ sellerdesk:
   app-url: http://localhost:5173
   jwt:
     secret: test-only-secret-test-only-secret-0123456789
+  # Dummy value: creating the Cloudinary client makes no network call. Integration tests replace
+  # the storage with FakeImageStorage anyway.
+  cloudinary:
+    url: cloudinary://000000000000000:test-only-secret@test-cloud

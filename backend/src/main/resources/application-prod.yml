@@ -41,6 +41,10 @@ springdoc:
     enabled: false
 
 sellerdesk:
+  # No default: without CLOUDINARY_URL the app refuses to start.
+  cloudinary:
+    url: ${CLOUDINARY_URL}
+    required: true
   refresh-cookie:
     # One service serves the app and the API, so the cookie is first-party. See docs/SECURITY.md §2.
     same-site: Strict

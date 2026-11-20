@@ -4,12 +4,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import com.sellerdesk.auth.model.User;
+import com.sellerdesk.auth.model.UserStatus;
+import com.sellerdesk.common.security.Permission;
+import com.sellerdesk.common.security.Role;
 import com.sellerdesk.common.security.AccessTokenClaims;
 import com.sellerdesk.common.security.JwtService;
 import jakarta.servlet.http.Cookie;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -19,6 +24,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
 import org.mockito.Mockito;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.http.MediaType;
@@ -39,6 +45,7 @@ import org.springframework.test.web.servlet.MvcResult;
  *       else the class is skipped).</li>
  *   <li>Real indexes (unique, TTL) are created at startup, like production.</li>
  *   <li>Mail is mocked: integration tests never send real email. Tests read codes from the mock.</li>
+ *   <li>Image storage is {@link FakeImageStorage} (no Cloudinary calls), reset before each test.</li>
  *   <li>Before <b>each test</b>, all documents in all collections are deleted. Documents, not
  *       collections: dropping would also drop the indexes created at startup.</li>
  *   <li>Use {@link #uniqueEmail} / {@link #uniqueName}: background tasks (@Async email) from a
@@ -51,6 +58,7 @@ import org.springframework.test.web.servlet.MvcResult;
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @ExtendWith(MongoAvailableCondition.class)
+@Import(FakeImageStorage.Config.class)
 public abstract class MongoIntegrationTestBase {
 
     @Autowired
@@ -61,6 +69,9 @@ public abstract class MongoIntegrationTestBase {
 
     @MockitoBean
     protected JavaMailSender mailSender;
+
+    @Autowired
+    protected FakeImageStorage imageStorage;
 
     @DynamicPropertySource
     static void mongoProperties(DynamicPropertyRegistry registry) {
@@ -84,6 +95,7 @@ public abstract class MongoIntegrationTestBase {
                 mongoTemplate.getCollection(collection).deleteMany(new Document());
             }
         }
+        imageStorage.reset();
     }
 
     // ---- Shared helpers: real shops and owners through the real HTTP flow -----------------
@@ -125,6 +137,30 @@ public abstract class MongoIntegrationTestBase {
         AccessTokenClaims claims = jwtService.parseAccessToken(accessToken);
         return new TestOwner(email, OWNER_PASSWORD, claims.userId(), claims.shopId(), shopName, accessToken,
                 verified.getResponse().getCookie("sd_refresh"));
+    }
+
+    /**
+     * A staff member of {@code shopId} with the given role and permissions, written straight into
+     * the database (until the staff module can invite users through the API). Returns a valid
+     * {@code Authorization} header value for them.
+     */
+    protected String bearerForStaff(String shopId, Role role, Set<Permission> permissions) {
+        User user = new User();
+        user.setEmail(uniqueEmail(role.name().toLowerCase(Locale.ROOT)));
+        user.setName(role.name() + " Test");
+        user.setShopId(shopId);
+        user.setRole(role);
+        user.setPermissions(permissions.isEmpty() ? java.util.EnumSet.noneOf(Permission.class)
+                : java.util.EnumSet.copyOf(permissions));
+        user.setStatus(UserStatus.ACTIVE);
+        user.setTokenVersion(0);
+        User saved = mongoTemplate.insert(user);
+        return "Bearer " + jwtService.generateAccessToken(saved.getId(), shopId, role, permissions, 0);
+    }
+
+    /** {@link #bearerForStaff} with the role's default permissions. */
+    protected String bearerForStaff(String shopId, Role role) {
+        return bearerForStaff(shopId, role, role.defaultPermissions());
     }
 
     /**

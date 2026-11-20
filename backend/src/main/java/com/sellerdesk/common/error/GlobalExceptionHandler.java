@@ -18,6 +18,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 /**
  * Converts every exception thrown by controllers and services into one {@link ApiError} JSON format.
@@ -45,16 +46,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AppException.class)
     ResponseEntity<ApiError> handleAppException(AppException ex, HttpServletRequest request) {
         log.debug("{} {}: {}", ex.getStatus().value(), ex.getCode(), ex.getMessage());
-        return build(ex.getStatus(), ex.getCode(), ex.getMessage(), request, List.of());
+        // FieldValidationException (our own field rules, same JSON as annotation-based validation)
+        // and e.g. SKU_ALREADY_EXISTS carry fieldErrors; most others have an empty list.
+        return build(ex.getStatus(), ex.getCode(), ex.getMessage(), request, ex.getFieldErrors());
     }
 
     // ---- Validation (400) ---------------------------------------------------------------
-
-    /** Our own field rules checked in services. Same JSON as annotation-based validation. */
-    @ExceptionHandler(FieldValidationException.class)
-    ResponseEntity<ApiError> handleFieldValidation(FieldValidationException ex, HttpServletRequest request) {
-        return build(ex.getStatus(), ex.getCode(), ex.getMessage(), request, ex.getFieldErrors());
-    }
 
     /** {@code @Valid @RequestBody} failed. */
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -94,6 +91,17 @@ public class GlobalExceptionHandler {
         log.debug("Unreadable request body: {}", ex.getMessage());
         return build(HttpStatus.BAD_REQUEST, MALFORMED_REQUEST,
                 "Request body is missing or is not valid JSON", request, List.of());
+    }
+
+    /**
+     * Upload bigger than {@code spring.servlet.multipart.max-file-size} / {@code max-request-size}.
+     * Spring rejects it while reading the request, before any controller runs, so the image
+     * validator never sees it. Same code as the validator's own size check.
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    ResponseEntity<ApiError> handleUploadTooLarge(MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        return build(HttpStatus.CONTENT_TOO_LARGE, ImageTooLargeException.CODE, ImageTooLargeException.MESSAGE,
+                request, List.of());
     }
 
     // ---- Security (401 / 403) -----------------------------------------------------------
