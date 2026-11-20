@@ -5,10 +5,14 @@ import { RegisterPage } from '../features/auth/RegisterPage'
 import { ResetPasswordPage } from '../features/auth/ResetPasswordPage'
 import { VerifyEmailPage } from '../features/auth/VerifyEmailPage'
 import { DashboardPage } from '../features/dashboard/DashboardPage'
+import { ProductCreatePage } from '../features/products/ProductCreatePage'
+import { ProductEditPage } from '../features/products/ProductEditPage'
+import { ProductListPage } from '../features/products/ProductListPage'
 import { AppLayout } from '../layouts/AppLayout'
 import { AuthLayout } from '../layouts/AuthLayout'
 import { ProtectedRoute } from './ProtectedRoute'
 import { PublicOnlyRoute } from './PublicOnlyRoute'
+import { RequirePermission } from './RequirePermission'
 
 export function AppRoutes() {
   return (
@@ -28,6 +32,14 @@ export function AppRoutes() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
+          {/* Without PRODUCT_EDIT the product page is read-only; creating needs PRODUCT_EDIT. */}
+          <Route element={<RequirePermission permission="PRODUCT_VIEW" />}>
+            <Route path="/products" element={<ProductListPage />} />
+            <Route path="/products/:id" element={<ProductEditPage />} />
+          </Route>
+          <Route element={<RequirePermission permission="PRODUCT_EDIT" />}>
+            <Route path="/products/new" element={<ProductCreatePage />} />
+          </Route>
         </Route>
       </Route>
 

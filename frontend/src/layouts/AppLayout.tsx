@@ -3,18 +3,22 @@ import { NavLink, Outlet } from 'react-router'
 import { BoxIcon, CloseIcon, HomeIcon, LogoutIcon, MenuIcon, OrdersIcon, SettingsIcon, UsersIcon } from '../components/icons'
 import { Spinner } from '../components/ui/Spinner'
 import { useAuth } from '../features/auth/authContext'
+import { usePermissions } from '../features/auth/usePermissions'
+import type { Permission } from '../types/auth'
 import { cn } from '../lib/cn'
 
 interface NavItem {
   label: string
   to?: string // no `to` = not built yet
   icon: ReactNode
+  /** Shown only to users with this permission. */
+  permission?: Permission
 }
 
 const NAV: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: <HomeIcon /> },
   { label: 'Orders', icon: <OrdersIcon /> },
-  { label: 'Products', icon: <BoxIcon /> },
+  { label: 'Products', to: '/products', icon: <BoxIcon />, permission: 'PRODUCT_VIEW' },
   { label: 'Customers', icon: <UsersIcon /> },
   { label: 'Settings', icon: <SettingsIcon /> },
 ]
@@ -84,6 +88,8 @@ export function AppLayout() {
 /** @param onNavigate called when a link is clicked (closes the mobile drawer) */
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { shop } = useAuth()
+  const { can } = usePermissions()
+  const items = NAV.filter((item) => !item.permission || can(item.permission))
 
   return (
     <div className="flex h-full flex-col">
@@ -92,7 +98,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         {shop && <div className="truncate text-sm text-slate-500">{shop.name}</div>}
       </div>
       <nav className="flex-1 space-y-1 p-3" aria-label="Main">
-        {NAV.map((item) =>
+        {items.map((item) =>
           item.to ? (
             <NavLink
               key={item.label}

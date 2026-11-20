@@ -4,7 +4,7 @@ The shop's catalog: products with embedded variants (size, color...), each varia
 own SKU and prices, plus product images stored in Cloudinary. Stock numbers live inside the
 variants but are **owned by the Inventory module**; this module never changes them.
 
-Status: **backend built** (frontend not yet). Backend package `com.sellerdesk.product` (+ `common.storage` for
+Status: **built** (backend and frontend). Backend package `com.sellerdesk.product` (+ `common.storage` for
 images), frontend `features/products`.
 
 Related: `API.md` §4 (endpoint summary), `SCHEMA.md` §6 (`products`), `SECURITY.md` §3

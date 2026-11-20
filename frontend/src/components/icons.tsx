@@ -53,3 +53,36 @@ export const LogoutIcon = () => (
     <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11" />
   </Icon>
 )
+export const PlusIcon = () => (
+  <Icon>
+    <path d="M12 5v14M5 12h14" />
+  </Icon>
+)
+export const SearchIcon = () => (
+  <Icon>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </Icon>
+)
+export const TrashIcon = () => (
+  <Icon>
+    <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+  </Icon>
+)
+export const ArrowLeftIcon = () => (
+  <Icon>
+    <path d="M15 6l-6 6 6 6" />
+  </Icon>
+)
+export const ArrowRightIcon = () => (
+  <Icon>
+    <path d="M9 6l6 6-6 6" />
+  </Icon>
+)
+export const ImageIcon = () => (
+  <Icon>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <circle cx="9" cy="10" r="2" />
+    <path d="m21 16-5-5-9 9" />
+  </Icon>
+)

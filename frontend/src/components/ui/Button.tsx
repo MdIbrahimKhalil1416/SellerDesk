@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from 'react'
+import type { ButtonHTMLAttributes, Ref } from 'react'
 import { cn } from '../../lib/cn'
 import { Spinner } from './Spinner'
 
@@ -9,6 +9,8 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   /** Shows a spinner and disables the button (prevents double submits). */
   loading?: boolean
   fullWidth?: boolean
+  /** React 19: refs are plain props on function components (e.g. to focus the button). */
+  ref?: Ref<HTMLButtonElement>
 }
 
 const variants: Record<Variant, string> = {
