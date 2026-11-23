@@ -86,7 +86,7 @@ One user belongs to **at most one shop** in Phase 1.
 | `shopId` | ObjectId | N | required for all roles except `PLATFORM_ADMIN` (null) |
 | `role` | String | Y | `PLATFORM_ADMIN`, `SHOP_OWNER`, `MODERATOR`, `PACKER`, `ACCOUNTANT` |
 | `permissions` | Array\<String\> | Y | effective permissions; starts as role defaults (`SECURITY.md` §3) |
-| `status` | String | Y | `PENDING_VERIFICATION` (registered, email not verified yet), `INVITED` (legacy, unused since staff invitations live in `staff_invitations`; remove with the staff module), `ACTIVE`, `DISABLED`. Only `ACTIVE` users can log in. |
+| `status` | String | Y | `PENDING_VERIFICATION` (registered, email not verified yet), `ACTIVE`, `DISABLED`. Staff are created `ACTIVE` when they accept an invitation (`staff_invitations`, `modules/STAFF.md`). Only `ACTIVE` users can log in. |
 | `tokenVersion` | Int32 | Y | starts `0`; incremented on logout / disable / role or permission change / password change. Invalidates all tokens. |
 | `invitedBy` | ObjectId | N | → `users._id` |
 | `lastLoginAt` | Date | N | |
@@ -99,6 +99,13 @@ One user belongs to **at most one shop** in Phase 1.
 **Trade-off:** global unique email means a person cannot be staff in two shops at once.
 Supporting that needs a separate `memberships` collection and a "choose shop" step at login.
 Deferred; the `shopId` claim design does not block adding it later.
+
+### `staff_invitations` (tenant-owned)
+
+Pending, accepted and cancelled staff invitations. Fields and indexes: `modules/STAFF.md` §2
+(`shopId`, `email`, `role`, `permissions`, `status` `PENDING`/`ACCEPTED`/`CANCELLED`, `tokenHash`
+(SHA-256, never the token), `expiresAt`, `invitedBy`, `sendCount`, `lastSentAt`, `recentSends`,
+`acceptedUserId`, `version`). The `users` document is only created on accept.
 
 ---
 
@@ -395,6 +402,7 @@ means each shop's data is one contiguous range in the index.
 | Order create | order; customer stats (and customer insert if new) |
 | Manual stock adjustment | product stock; one movement |
 | Shop registration | shop; owner user |
+| Staff invitation accept | new staff user; invitation `ACCEPTED` |
 
 Not needed: single-document updates (product edit, customer edit). One document write is
 always atomic in MongoDB.

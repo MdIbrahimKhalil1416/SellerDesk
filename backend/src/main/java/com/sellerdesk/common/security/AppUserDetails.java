@@ -20,7 +20,7 @@ import org.springframework.security.core.userdetails.UserDetails;
  * @param userId       users._id
  * @param shopId       the user's shop; {@code null} only for PLATFORM_ADMIN
  * @param email        login identity (lowercase)
- * @param passwordHash BCrypt hash; {@code null} for INVITED users who have not set one yet
+ * @param passwordHash BCrypt hash
  * @param enabled      true only when the user's status is ACTIVE
  * @param tokenVersion compared with the {@code ver} claim of every token (revocation)
  */

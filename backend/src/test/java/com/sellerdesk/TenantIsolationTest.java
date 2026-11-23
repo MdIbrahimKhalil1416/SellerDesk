@@ -16,6 +16,7 @@ import com.sellerdesk.common.security.JwtService;
 import com.sellerdesk.common.security.Role;
 import com.sellerdesk.common.security.TenantContext;
 import com.sellerdesk.product.ProductTestApi;
+import com.sellerdesk.staff.StaffTestApi;
 import com.sellerdesk.testsupport.MongoIntegrationTestBase;
 import com.sellerdesk.testsupport.TestImages;
 import java.nio.charset.StandardCharsets;
@@ -337,7 +338,7 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
      * }
      * }</pre>
      *
-     * Modules still to add: Staff, Inventory, Customers, Orders. Done: {@link Products}.
+     * Modules still to add: Inventory, Customers, Orders. Done: {@link Products}, {@link Staff}.
      */
     @Nested
     class CrossTenantById {
@@ -452,6 +453,148 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
 
         private org.bson.Document productDocument(String productId) {
             return mongoTemplate.findById(new org.bson.types.ObjectId(productId), org.bson.Document.class, "products");
+        }
+    }
+
+    // ==== 8. Staff =====================================================================
+
+    @Nested
+    class Staff {
+
+        private StaffTestApi api;
+        private StaffTestApi.Member memberOfB;
+        private String invitationOfB;
+        private String invitedEmailOfB;
+
+        @BeforeEach
+        void shopBHasAMemberAndAPendingInvitation() throws Exception {
+            api = new StaffTestApi(mockMvc, mailSender);
+            memberOfB = api.inviteAndAccept(shopB.bearer(), uniqueEmail("beta-member"), "PACKER");
+            invitedEmailOfB = uniqueEmail("beta-invited");
+            invitationOfB = api.invite(shopB.bearer(), invitedEmailOfB, "MODERATOR");
+        }
+
+        @Test
+        void otherShopsMemberIsNotFoundOnEveryIdEndpoint() throws Exception {
+            org.bson.Document memberBefore = document("users", memberOfB.userId());
+            org.bson.Document ownerBBefore = document("users", shopB.userId());
+            assertHiddenFromOtherShop("/api/v1/staff/" + memberOfB.userId());
+            assertHiddenFromOtherShop("/api/v1/staff/" + shopB.userId());
+
+            String json = MediaType.APPLICATION_JSON_VALUE;
+            for (String userId : new String[] {memberOfB.userId(), shopB.userId()}) {
+                assertNotFoundForA(patch("/api/v1/staff/{id}", userId).contentType(json).content("{\"role\":\"MODERATOR\"}"));
+                assertNotFoundForA(patch("/api/v1/staff/{id}/status", userId).contentType(json)
+                        .content("{\"status\":\"DISABLED\"}"));
+            }
+
+            assertThat(document("users", memberOfB.userId())).isEqualTo(memberBefore);
+            assertThat(document("users", shopB.userId())).isEqualTo(ownerBBefore);
+            mockMvc.perform(get("/api/v1/auth/me").header("Authorization", memberOfB.bearer())).andExpect(status().isOk());
+        }
+
+        @Test
+        void otherShopsInvitationIsNotFoundForResendAndCancel() throws Exception {
+            org.bson.Document before = document("staff_invitations", invitationOfB);
+
+            assertNotFoundForA(post("/api/v1/staff/invitations/{id}/resend", invitationOfB));
+            assertNotFoundForA(delete("/api/v1/staff/invitations/{id}", invitationOfB));
+
+            // Same token hash, send count and status: nothing was resent or cancelled.
+            assertThat(document("staff_invitations", invitationOfB)).isEqualTo(before);
+        }
+
+        @Test
+        void listShowsOnlyOwnMembersAndInvitations() throws Exception {
+            String invitationOfA = api.invite(shopA.bearer(), uniqueEmail("alpha-invited"), "PACKER");
+
+            String all = body(get("/api/v1/staff").header("Authorization", shopA.bearer()));
+            assertThat(all).contains(shopA.userId()).contains(invitationOfA)
+                    .doesNotContain(shopB.userId()).doesNotContain(memberOfB.userId()).doesNotContain(invitationOfB)
+                    .doesNotContain(shopB.email()).contains("\"totalElements\":2");
+
+            // Searches that match only B's records find nothing for A.
+            for (String q : new String[] {"beta", memberOfB.email(), invitedEmailOfB, "tenant-b"}) {
+                String found = body(get("/api/v1/staff").param("q", q).header("Authorization", shopA.bearer()));
+                assertThat(found).as(q).contains("\"totalElements\":0");
+            }
+            for (String status : new String[] {"ACTIVE", "INVITED", "DISABLED", "EXPIRED"}) {
+                String found = body(get("/api/v1/staff").param("status", status).header("Authorization", shopA.bearer()));
+                assertThat(found).doesNotContain(memberOfB.userId()).doesNotContain(invitationOfB);
+            }
+        }
+
+        @Test
+        void sameEmailInvitedByBothShopsIsSeparateAndFirstAcceptWins() throws Exception {
+            String email = uniqueEmail("both");
+            api.invite(shopB.bearer(), email, "PACKER");
+            String tokenFromB = api.awaitInviteToken(email);
+            api.invite(shopA.bearer(), email, "ACCOUNTANT");
+            String tokenFromA = api.awaitInviteToken(email, tokenFromB);
+
+            api.accept(tokenFromA, "Both");
+            mockMvc.perform(post("/api/v1/auth/invitations/accept").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"token\":\"%s\",\"name\":\"Both\",\"password\":\"both2026pass\"}".formatted(tokenFromB)))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("EMAIL_ALREADY_REGISTERED"));
+        }
+
+        @Test
+        void shopIdInInviteAndPatchBodyIsIgnored() throws Exception {
+            String email = uniqueEmail("sneaky");
+            String created = bodyWithStatus(post("/api/v1/staff/invitations").header("Authorization", shopA.bearer())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"email\":\"%s\",\"role\":\"PACKER\",\"shopId\":\"%s\"}".formatted(email, shopB.shopId())),
+                    201);
+            String invitationId = com.jayway.jsonpath.JsonPath.read(created, "$.id");
+            assertThat(document("staff_invitations", invitationId).get("shopId"))
+                    .isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+
+            StaffTestApi.Member memberOfA = api.inviteAndAccept(shopA.bearer(), uniqueEmail("alpha-member"), "PACKER");
+            mockMvc.perform(patch("/api/v1/staff/{id}", memberOfA.userId()).header("Authorization", shopA.bearer())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"role\":\"MODERATOR\",\"shopId\":\"%s\"}".formatted(shopB.shopId())))
+                    .andExpect(status().isOk());
+            assertThat(document("users", memberOfA.userId()).get("shopId"))
+                    .isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+            mockMvc.perform(get("/api/v1/staff/{id}", memberOfA.userId()).header("Authorization", shopB.bearer()))
+                    .andExpect(status().isNotFound());
+        }
+
+        @Test
+        void acceptingShopAsInvitationCreatesUserInShopAWhateverTheBodySays() throws Exception {
+            String email = uniqueEmail("joiner");
+            api.invite(shopA.bearer(), email, "PACKER");
+            String token = api.awaitInviteToken(email);
+
+            String body = bodyWithStatus(post("/api/v1/auth/invitations/accept").contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                            {"token":"%s","name":"Joiner","password":"join2026pass",
+                             "shopId":"%s","role":"SHOP_OWNER","email":"evil@example.com","permissions":["STAFF_MANAGE"]}
+                            """.formatted(token, shopB.shopId())), 200);
+            String userId = com.jayway.jsonpath.JsonPath.read(body, "$.user.id");
+            org.bson.Document user = document("users", userId);
+            assertThat(user.get("shopId")).isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+            assertThat(user.getString("role")).isEqualTo("PACKER");
+            assertThat(user.getString("email")).isEqualTo(email);
+            assertThat(user.getList("permissions", String.class)).doesNotContain("STAFF_MANAGE");
+        }
+
+        private void assertNotFoundForA(org.springframework.test.web.servlet.request.AbstractMockHttpServletRequestBuilder<?> request) throws Exception {
+            String body = mockMvc.perform(request.header("Authorization", shopA.bearer()))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain(shopB.shopId()).doesNotContain(memberOfB.email());
+        }
+
+        private org.bson.Document document(String collection, String id) {
+            return mongoTemplate.findById(new org.bson.types.ObjectId(id), org.bson.Document.class, collection);
+        }
+
+        private String bodyWithStatus(MockHttpServletRequestBuilder request, int expectedStatus) throws Exception {
+            return mockMvc.perform(request).andExpect(status().is(expectedStatus))
+                    .andReturn().getResponse().getContentAsString();
         }
     }
 

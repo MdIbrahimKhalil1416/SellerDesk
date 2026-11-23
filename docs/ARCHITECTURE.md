@@ -44,6 +44,7 @@ Each module has: `controller`, `service`, `repository`, `dto`, `model`.
      │  └──► customer
      └─────► product
    staff ──► auth
+   staff ──► shop          (shop name and status for invite email / accept page)
    auth  ──► shop          (shop registration, and the shop summary in /auth/me)
    all   ──► common
    ```

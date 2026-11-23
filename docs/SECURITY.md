@@ -22,7 +22,7 @@ Register (new seller)
 Login
    POST /auth/login {email, password}
       → ACTIVE user + correct password → access token + refresh cookie
-      → wrong email, wrong password, DISABLED, INVITED → same generic 401 INVALID_CREDENTIALS
+      → wrong email, wrong password, DISABLED → same generic 401 INVALID_CREDENTIALS
       → correct password but PENDING_VERIFICATION → 403 EMAIL_NOT_VERIFIED
         (safe to reveal: the caller already proved they know the password)
 
@@ -33,7 +33,7 @@ Forgot password
       → if the user exists and is not DISABLED: OTP (purpose PASSWORD_RESET) emailed
 2. POST /auth/password/reset {email, code, newPassword}
       → new passwordHash, tokenVersion + 1 (logs out every device)
-      → INVITED or PENDING_VERIFICATION becomes ACTIVE (the code proved email ownership)
+      → PENDING_VERIFICATION becomes ACTIVE (the code proved email ownership)
       → 204; the user then logs in normally
 ```
 

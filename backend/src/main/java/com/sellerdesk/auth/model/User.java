@@ -38,7 +38,7 @@ public class User extends AuditableDocument {
     @Indexed(unique = true)
     private String email;
 
-    /** BCrypt hash. {@code null} while INVITED. */
+    /** BCrypt hash. Set at registration or when a staff invitation is accepted. */
     private String passwordHash;
 
     private String name;

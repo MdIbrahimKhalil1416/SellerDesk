@@ -139,7 +139,7 @@ public class AuthController {
     }
 
     @Operation(summary = "Set a new password with the emailed code",
-            description = "Revokes all existing tokens and activates INVITED / PENDING_VERIFICATION users. Log in afterwards.")
+            description = "Revokes all existing tokens and activates PENDING_VERIFICATION users. Log in afterwards.")
     @ApiResponse(responseCode = "204", description = "Password changed")
     @ApiResponse(responseCode = "400", description = "INVALID_OTP or VALIDATION_FAILED", content = @Content(schema = @Schema(implementation = ApiError.class)))
     @PostMapping("/password/reset")

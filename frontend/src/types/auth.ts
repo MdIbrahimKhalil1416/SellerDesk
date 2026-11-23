@@ -20,7 +20,7 @@ export type Permission =
   | 'ORDER_CANCEL'
   | 'REPORT_VIEW'
 
-export type UserStatus = 'PENDING_VERIFICATION' | 'INVITED' | 'ACTIVE' | 'DISABLED'
+export type UserStatus = 'PENDING_VERIFICATION' | 'ACTIVE' | 'DISABLED'
 
 export type ShopStatus = 'ACTIVE' | 'SUSPENDED'
 

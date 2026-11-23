@@ -266,7 +266,6 @@ class AuthServiceTest {
         }
 
         verify(otpService).issue("active@example.com", OtpPurpose.PASSWORD_RESET, "Rahim Uddin");
-        verify(otpService).issue("invited@example.com", OtpPurpose.PASSWORD_RESET, "Rahim Uddin");
         verify(otpService).issue("pending_verification@example.com", OtpPurpose.PASSWORD_RESET, "Rahim Uddin");
         verify(otpService, never()).issue(eq("disabled@example.com"), any(), any());
     }
@@ -286,7 +285,7 @@ class AuthServiceTest {
 
     @Test
     void resetSetsNewHashRevokesTokensAndEvictsCache() {
-        when(userRepository.findByEmail("rahim@example.com")).thenReturn(Optional.of(user(UserStatus.INVITED, 2)));
+        when(userRepository.findByEmail("rahim@example.com")).thenReturn(Optional.of(user(UserStatus.PENDING_VERIFICATION, 2)));
         when(passwordEncoder.encode("newShop2026")).thenReturn("$2a$12$NEW");
         when(userRepository.resetPassword("u1", "$2a$12$NEW", NOW)).thenReturn(1L);
 

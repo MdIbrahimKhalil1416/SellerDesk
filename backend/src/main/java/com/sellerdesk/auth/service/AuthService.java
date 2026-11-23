@@ -194,7 +194,7 @@ public class AuthService {
     }
 
     /**
-     * Correct code → new password, user ACTIVE (this also activates INVITED staff and
+     * Correct code → new password, user ACTIVE (this also activates
      * PENDING_VERIFICATION owners: the code proved they own the email), every existing token revoked.
      * The user then logs in normally.
      */
@@ -264,7 +264,7 @@ public class AuthService {
                     "Please verify your email first. Check your inbox for the code");
         }
         if (user.getStatus() != UserStatus.ACTIVE) {
-            throw invalidCredentials(); // DISABLED / INVITED: same generic answer
+            throw invalidCredentials(); // DISABLED: same generic answer
         }
 
         loginAttemptLimiter.reset(email);
@@ -324,6 +324,16 @@ public class AuthService {
         User user = userRepository.findById(userId).orElseThrow(() -> ResourceNotFoundException.of("User"));
         ShopSummary shop = user.getShopId() == null ? null : shopService.findSummary(user.getShopId()).orElse(null);
         return new MeResponse(UserResponse.from(user), shop);
+    }
+
+    // ---- Session for a user created elsewhere -------------------------------------------
+
+    /**
+     * Logs in a user who just proved their email another way, e.g. by accepting a staff
+     * invitation: access token + refresh token, like {@link #verifyEmail}.
+     */
+    public AuthResult startSession(User user) {
+        return issueTokens(user);
     }
 
     // ---- helpers ------------------------------------------------------------------------

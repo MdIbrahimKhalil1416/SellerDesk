@@ -26,7 +26,7 @@ customer stats). Separate endpoints make each one easy to secure, document and t
 | POST | `/auth/verify-email/resend` | public | `{email}` → always `202 {message, resendAfterSeconds}`: identical for unknown, already-verified and rate-limited emails (never `429`). The code is sent in the background only if the account is `PENDING_VERIFICATION` and within the limits. |
 | POST | `/auth/login` | public | `{email, password}` → `200 {accessToken, expiresIn, user}` + refresh cookie. `401 INVALID_CREDENTIALS`, `403 EMAIL_NOT_VERIFIED`, `429 LOGIN_RATE_LIMITED`. |
 | POST | `/auth/password/forgot` | public | `{email}` → always `202 {message, resendAfterSeconds}`, same rules as resend (never `429`). Code sent in the background unless the account is unknown or `DISABLED`. |
-| POST | `/auth/password/reset` | public | `{email, code, newPassword}` → `204`. Password rules as registration (`400 VALIDATION_FAILED`). Increments `tokenVersion` (all sessions end), activates `INVITED` / `PENDING_VERIFICATION` users. `400 INVALID_OTP` (also for unknown/disabled emails). Log in afterwards. |
+| POST | `/auth/password/reset` | public | `{email, code, newPassword}` → `204`. Password rules as registration (`400 VALIDATION_FAILED`). Increments `tokenVersion` (all sessions end), activates `PENDING_VERIFICATION` users. `400 INVALID_OTP` (also for unknown/disabled emails). Log in afterwards. |
 | POST | `/auth/refresh` | refresh cookie | no body → `200 {accessToken, expiresIn}` + new refresh cookie. `401 INVALID_REFRESH_TOKEN` if cookie missing/invalid/old version. `403 INVALID_ORIGIN` if `Origin` is present and not `APP_URL`. |
 | POST | `/auth/logout` | auth (Bearer) | no body → `204`, deletes the cookie (`Max-Age=0`), increments `tokenVersion`: every access and refresh token of the user stops working (all devices). |
 | GET | `/auth/me` | auth | → `{user, shop: {id, name, status}}`. `user` read fresh from the database. `shop` is `null` for `PLATFORM_ADMIN`. |
@@ -50,13 +50,13 @@ Full spec, errors and decisions: `docs/modules/STAFF.md`.
 
 | Method | Path | Auth | Request → Response |
 |--------|------|------|--------------------|
-| GET | `/staff` | `STAFF_MANAGE` | `?q=&role=&status=` (`ACTIVE`/`DISABLED`/`INVITED`/`EXPIRED`) → page of `StaffRow {kind (MEMBER/INVITATION), id, name, email, role, permissions, status, lastLoginAt, invitedAt, expiresAt, lastSentAt}`. Members (incl. owner) and pending invitations in one list. |
+| GET | `/staff` | `STAFF_MANAGE` | `?q=&role=&status=` (`ACTIVE`/`DISABLED`/`INVITED`/`EXPIRED`) → page of `StaffRow {kind (MEMBER/INVITATION), id, name, email, role, permissions, status, lastLoginAt, invitedAt, expiresAt, lastSentAt}`. Members (incl. owner) and pending invitations in one list. Fixed order: owner, invitations (newest first), members by name. |
 | GET | `/staff/permissions` | `STAFF_MANAGE` | → `{permissions: [{code, description}], roleDefaults: {MODERATOR: [...], ...}}` (for the staff edit UI) |
 | GET | `/staff/{userId}` | `STAFF_MANAGE` | → `StaffResponse {id, name, email, phone, role, permissions, status, lastLoginAt, createdAt, invitedBy{id, name}}` |
 | PATCH | `/staff/{userId}` | `STAFF_MANAGE` | `{role?, permissions?}` → `StaffResponse`. Role change resets permissions to defaults unless `permissions` also given. Bumps `tokenVersion`. `403 OWNER_READ_ONLY` / `CANNOT_MODIFY_SELF` / `PERMISSION_NOT_GRANTABLE`. |
 | PATCH | `/staff/{userId}/status` | `STAFF_MANAGE` | `{status: ACTIVE or DISABLED}` → `StaffResponse`. Disable bumps `tokenVersion`. Not allowed on owner or self. |
 | POST | `/staff/invitations` | `STAFF_MANAGE` | `{email, role (MODERATOR/PACKER/ACCOUNTANT), permissions?}` → `201 InvitationResponse`, emails a link valid 7 days. `409 ALREADY_A_MEMBER` / `ALREADY_INVITED` / `EMAIL_ALREADY_REGISTERED`. |
-| POST | `/staff/invitations/{id}/resend` | `STAFF_MANAGE` | → `200 InvitationResponse`, new token (old link dies), new expiry. `429 INVITE_RESEND_TOO_SOON` / `INVITE_RESEND_LIMIT`, `409 INVITATION_NOT_PENDING`. |
+| POST | `/staff/invitations/{id}/resend` | `STAFF_MANAGE` | → `200 InvitationResponse`, new token (old link dies), new expiry. `429 INVITE_RESEND_TOO_SOON` / `INVITE_RESEND_LIMIT` (with `Retry-After`), `409 INVITATION_NOT_PENDING`. |
 | DELETE | `/staff/invitations/{id}` | `STAFF_MANAGE` | → `204`. `409 INVITATION_NOT_PENDING`. |
 | POST | `/auth/invitations/preview` | public | `{token}` → `{email, shopName, role, inviterName, expiresAt}`. `400 INVALID_INVITATION` / `INVITATION_EXPIRED`. |
 | POST | `/auth/invitations/accept` | public | `{token, name, password}` → `200 {accessToken, expiresIn, user}` + refresh cookie. Creates the `ACTIVE` user. `400 INVALID_INVITATION` / `INVITATION_EXPIRED` / `VALIDATION_FAILED`, `409 EMAIL_ALREADY_REGISTERED`. |

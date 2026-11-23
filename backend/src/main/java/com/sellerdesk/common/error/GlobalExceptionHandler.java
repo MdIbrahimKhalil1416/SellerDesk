@@ -7,6 +7,7 @@ import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -48,7 +49,13 @@ public class GlobalExceptionHandler {
         log.debug("{} {}: {}", ex.getStatus().value(), ex.getCode(), ex.getMessage());
         // FieldValidationException (our own field rules, same JSON as annotation-based validation)
         // and e.g. SKU_ALREADY_EXISTS carry fieldErrors; most others have an empty list.
-        return build(ex.getStatus(), ex.getCode(), ex.getMessage(), request, ex.getFieldErrors());
+        ResponseEntity<ApiError> response = build(ex.getStatus(), ex.getCode(), ex.getMessage(), request, ex.getFieldErrors());
+        if (ex instanceof RateLimitedException rateLimited) {
+            return ResponseEntity.status(response.getStatusCode())
+                    .header(HttpHeaders.RETRY_AFTER, String.valueOf(rateLimited.getRetryAfterSeconds()))
+                    .body(response.getBody());
+        }
+        return response;
     }
 
     // ---- Validation (400) ---------------------------------------------------------------

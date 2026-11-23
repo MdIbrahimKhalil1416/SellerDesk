@@ -11,8 +11,8 @@ import org.springframework.data.repository.Repository;
  * Lookups needed <b>before</b> we know the shop: login by email, and the JWT filter loading the
  * token's user by id. That is why these methods have no {@code shopId} parameter.
  *
- * <p>Only {@code auth} code may use this repository. Staff management (listing or editing users
- * of a shop) gets shop-scoped methods such as {@code findByIdAndShopId} in its own step.
+ * <p>Only {@code auth} code may use this repository. Staff management goes through
+ * {@code UserService}, which only uses the shop-scoped {@link #findByIdAndShopId} for shop data.
  *
  * <p>Extends {@link Repository}, not {@code MongoRepository}, so no unscoped
  * {@code findAll()} / {@code deleteById()} exist (docs/SECURITY.md §4, layer 3).
@@ -34,6 +34,9 @@ import org.springframework.data.repository.Repository;
 public interface UserRepository extends Repository<User, String> {
 
     Optional<User> findById(String id);
+
+    /** Staff management: a user of this shop only. Another shop's user → empty (→ 404). */
+    Optional<User> findByIdAndShopId(String id, String shopId);
 
     /** {@code email} must already be lowercase and trimmed. */
     Optional<User> findByEmail(String email);

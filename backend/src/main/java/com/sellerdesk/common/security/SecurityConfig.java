@@ -60,6 +60,9 @@ public class SecurityConfig {
             "/api/v1/auth/refresh",
             "/api/v1/auth/password/forgot",
             "/api/v1/auth/password/reset",
+            // Staff invitation accept page (docs/modules/STAFF.md §3.5): the token is the proof.
+            "/api/v1/auth/invitations/preview",
+            "/api/v1/auth/invitations/accept",
     };
 
     private final RestSecurityErrorHandler securityErrorHandler;

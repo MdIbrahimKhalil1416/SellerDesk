@@ -24,11 +24,22 @@ public class CacheConfig {
      */
     public static final String PRODUCT_LOOKUP = "productLookup";
 
+    /**
+     * Permission list and role defaults for the staff screen (docs/modules/STAFF.md §3.2). Built
+     * from enums, so it only changes with a deploy: no expiry.
+     */
+    public static final String STAFF_PERMISSION_CATALOG = "staffPermissionCatalog";
+
     @Bean
     CacheManagerCustomizer<CaffeineCacheManager> perCacheSettings() {
-        return cacheManager -> cacheManager.registerCustomCache(PRODUCT_LOOKUP, Caffeine.newBuilder()
-                .expireAfterWrite(Duration.ofMinutes(10))
-                .maximumSize(1000)
-                .build());
+        return cacheManager -> {
+            cacheManager.registerCustomCache(PRODUCT_LOOKUP, Caffeine.newBuilder()
+                    .expireAfterWrite(Duration.ofMinutes(10))
+                    .maximumSize(1000)
+                    .build());
+            cacheManager.registerCustomCache(STAFF_PERMISSION_CATALOG, Caffeine.newBuilder()
+                    .maximumSize(1)
+                    .build());
+        };
     }
 }

@@ -4,7 +4,7 @@ Owner and staff with `STAFF_MANAGE` invite people by email, see everyone in the 
 change roles and permissions, and deactivate or reactivate staff. An invited person opens
 the link from the email, chooses a name and password, and is logged in.
 
-Status: **spec, not built**. Backend package `com.sellerdesk.staff`, frontend `features/staff`.
+Status: **backend built**, frontend not yet. Backend package `com.sellerdesk.staff`, frontend `features/staff`.
 
 Related: `API.md` §3 (endpoint summary), `SECURITY.md` §3 (permissions, role defaults),
 `SCHEMA.md` §3 (`users`).
@@ -43,6 +43,7 @@ Related: `API.md` §3 (endpoint summary), `SECURITY.md` §3 (permissions, role d
 | `invitedBy` | ObjectId | Y | → `users._id` |
 | `sendCount` | Int32 | Y | emails sent for this invitation (first send = 1) |
 | `lastSentAt` | Date | Y | |
+| `recentSends` | Array\<Date\> | Y | times of the last sends (max 5, older than 24 h dropped). Needed for the "5 sends per 24 h" limit, which `sendCount`/`lastSentAt` alone cannot express. |
 | `acceptedUserId` | ObjectId | N | set on accept |
 | `version`, `createdAt`, `updatedAt` | | Y | `@Version` optimistic lock |
 
@@ -56,9 +57,10 @@ Related: `API.md` §3 (endpoint summary), `SECURITY.md` §3 (permissions, role d
 
 - New staff are created **at accept time** with status `ACTIVE`, `shopId`/`role`/`permissions`
   copied from the invitation, `invitedBy` from the invitation.
-- `INVITED` status is no longer used. Remove it from `UserStatus` when this module is built,
-  and drop the "activates `INVITED` users" behavior from password reset
-  (`PENDING_VERIFICATION` activation stays).
+- There is no `INVITED` user status (removed from `UserStatus` with this module). Password
+  reset activates only `PENDING_VERIFICATION` users.
+- `staff` changes users only through `auth.service.UserService` (ARCHITECTURE.md §1). The list
+  aggregation reads `users` directly (read-only) in `StaffQueryRepository`.
 
 ---
 
@@ -74,7 +76,8 @@ Query: `q` (case-insensitive *contains* on name or email; regex-escaped), `role`
 `status` filter values: `ACTIVE`, `DISABLED`, `INVITED` (pending, not expired), `EXPIRED`
 (pending, expired). Omitted → all of them (accepted and cancelled invitations are never listed).
 
-Order: owner first, then pending invitations (newest first), then members by name.
+Order: owner first, then pending invitations (newest first), then members by name. Fixed order,
+no `sort` parameter (one combined table; decided when the module was built).
 
 Response: page of `StaffRow`:
 
@@ -121,6 +124,8 @@ this shop, it reuses it: new role/permissions, new token, new expiry (no `409`).
 
 ### 3.5 Accept (public)
 
+Both paths are listed in `SecurityConfig.PUBLIC_PATHS`.
+
 | Method | Path | Request → Response |
 |--------|------|--------------------|
 | POST | `/auth/invitations/preview` | `{token}` → `200 {email, shopName, role, inviterName, expiresAt}`. Lets the page show "Join *Shop* as Moderator" before the form. Token in the body, not the URL, so it is not logged. |
@@ -148,8 +153,9 @@ All errors use the `ApiError` format. Frontend switches on `code`.
 | Change role / permissions / status of the owner | 403 | `OWNER_READ_ONLY` |
 | Change own role / permissions / status | 403 | `CANNOT_MODIFY_SELF` |
 | Non-owner grants (invite or edit) a permission they do not have | 403 | `PERMISSION_NOT_GRANTABLE` |
+| Owner edits their own row | 403 | `OWNER_READ_ONLY` (owner rule is checked before the self rule) |
 | Two people edit the same member at once | 409 | `CONCURRENT_MODIFICATION` |
-| Missing `STAFF_MANAGE` | 403 | `ACCESS_DENIED` (security handler) |
+| Missing `STAFF_MANAGE` | 403 | `FORBIDDEN` (global handler, same as every other module) |
 | Member or invitation id unknown **or from another shop** | 404 | `NOT_FOUND` |
 | Preview / accept: token unknown, cancelled or already used | 400 | `INVALID_INVITATION` |
 | Preview / accept: token valid but expired | 400 | `INVITATION_EXPIRED` |
@@ -161,6 +167,12 @@ see their own shop's members, so naming that case leaks nothing. "Registered els
 the same answer registration already gives (`409 EMAIL_ALREADY_REGISTERED`).
 
 Other rules:
+- "Grant" means: in the new permission set but not in the member's current set. Only those must
+  be permissions the editor has. Keeping or removing a permission the editor lacks is allowed.
+  On invite every permission counts as granted, including role defaults when no list is given.
+- "At least one active owner" needs no extra check: owner rows are read-only, nobody changes
+  themselves, and no API creates a second owner or demotes the owner.
+- `429` responses carry a `Retry-After` header (seconds).
 - Changing a member's role or permissions, or disabling them, bumps `tokenVersion`: their
   current session ends at the next request and they log in again with the new rights.
 - Reactivating (`DISABLED → ACTIVE`) does not change role or permissions.
@@ -174,7 +186,8 @@ Other rules:
 
 Invite email (subject: "*Inviter* invited you to *Shop* on SellerDesk"): shop name, inviter
 name, role, the link, "expires on *date*", and "ignore this email if you did not expect it".
-Sent by an `@TransactionalEventListener(AFTER_COMMIT)` + `@Async`, like OTP mails. The plain
+Sent by `StaffEmailListener` on `StaffInvitedEvent` with `@TransactionalEventListener(AFTER_COMMIT)` + `@Async`,
+like registration mails. Invite and resend save inside a transaction, so the listener fires. The plain
 token lives only in the event object and the email, never in logs.
 
 ---
