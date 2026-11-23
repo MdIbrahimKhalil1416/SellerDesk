@@ -2,8 +2,9 @@
 
 [![CI](https://github.com/MdIbrahimKhalil1416/SellerDesk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MdIbrahimKhalil1416/SellerDesk/actions/workflows/ci.yml)
 
-**Status: Phase 1 in progress.** Auth, shop registration, the multi-tenancy foundation and the
-auth pages are built. Staff, products, inventory, customers and orders are next.
+**Status: Phase 1 in progress.** Auth, shop registration, the multi-tenancy foundation, the
+auth pages and the Product & Variant module (backend and frontend, Cloudinary images) are built.
+Staff, inventory, customers and orders are next.
 See [docs/SCOPE.md](docs/SCOPE.md).
 
 ## What it is
@@ -167,9 +168,12 @@ The frontend has **no** environment variables.
 | `MAIL_USERNAME` | prod | SMTP user |
 | `MAIL_PASSWORD` | prod | SMTP password (e.g. a Gmail App Password) |
 | `MAIL_FROM` | no | sender shown in emails |
+| `CLOUDINARY_URL` | prod | product images: `cloudinary://<api_key>:<api_secret>@<cloud_name>`; optional in dev (uploads then fail with `502`) |
 | `MONGODB_TEST_URI` | no | tests only: integration test database (name ends with `-test`); never on Render |
 
 ## Deployment
 
 Step-by-step instructions for Render, MongoDB Atlas and UptimeRobot:
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+Live app: https://sellerdesk-lcrs.onrender.com

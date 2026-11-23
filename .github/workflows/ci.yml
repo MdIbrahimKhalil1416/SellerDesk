@@ -106,6 +106,8 @@ jobs:
           echo "$version" | grep -q 'version "21'
 
       # Dummy values only. PORT=9090 proves the app listens on $PORT, not a fixed 8080.
+      # Every variable the prod profile requires must be set, or the app refuses to start.
+      # CLOUDINARY_URL is a fake account: nothing is uploaded in this smoke test.
       - name: Start container
         run: |
           docker run -d --name app --network host \
@@ -114,6 +116,7 @@ jobs:
             -e MONGODB_URI=mongodb://localhost:27017/sellerdesk-ci \
             -e JWT_SECRET="$(openssl rand -base64 48)" \
             -e MAIL_USERNAME=ci -e MAIL_PASSWORD=ci \
+            -e CLOUDINARY_URL=cloudinary://ci-key:ci-secret@ci-cloud \
             sellerdesk:ci
           for i in $(seq 1 60); do
             if curl -fsS http://localhost:9090/actuator/health >/dev/null 2>&1; then echo "Up after ${i}x2 s"; exit 0; fi
