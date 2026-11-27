@@ -4,8 +4,8 @@
 
 **Status: Phase 1 in progress.** Auth, shop registration, the multi-tenancy foundation, the
 auth pages, the Product & Variant module (backend and frontend, Cloudinary images) and the
-Staff & Permission backend (invitations, roles, permissions) are built.
-Staff frontend, inventory, customers and orders are next.
+Staff & Permission module (invitations, roles, permissions; backend and frontend) are built.
+Inventory, customers and orders are next.
 See [docs/SCOPE.md](docs/SCOPE.md).
 
 ## What it is

@@ -86,3 +86,15 @@ export const ImageIcon = () => (
     <path d="m21 16-5-5-9 9" />
   </Icon>
 )
+export const UserPlusIcon = () => (
+  <Icon>
+    <circle cx="10" cy="8" r="3.5" />
+    <path d="M3.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6" />
+  </Icon>
+)
+export const ShieldIcon = () => (
+  <Icon>
+    <path d="M12 3 4.5 6v5.5c0 4.5 3.2 8.3 7.5 9.5 4.3-1.2 7.5-5 7.5-9.5V6z" />
+    <path d="m9 12 2 2 4-4" />
+  </Icon>
+)

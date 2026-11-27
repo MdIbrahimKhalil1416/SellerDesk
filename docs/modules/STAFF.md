@@ -4,7 +4,7 @@ Owner and staff with `STAFF_MANAGE` invite people by email, see everyone in the 
 change roles and permissions, and deactivate or reactivate staff. An invited person opens
 the link from the email, chooses a name and password, and is logged in.
 
-Status: **backend built**, frontend not yet. Backend package `com.sellerdesk.staff`, frontend `features/staff`.
+Status: **backend and frontend built**. Backend package `com.sellerdesk.staff`, frontend `features/staff`.
 
 Related: `API.md` §3 (endpoint summary), `SECURITY.md` §3 (permissions, role defaults),
 `SCHEMA.md` §3 (`users`).

@@ -8,6 +8,8 @@ import { DashboardPage } from '../features/dashboard/DashboardPage'
 import { ProductCreatePage } from '../features/products/ProductCreatePage'
 import { ProductEditPage } from '../features/products/ProductEditPage'
 import { ProductListPage } from '../features/products/ProductListPage'
+import { AcceptInvitePage } from '../features/staff/AcceptInvitePage'
+import { StaffPage } from '../features/staff/StaffPage'
 import { AppLayout } from '../layouts/AppLayout'
 import { AuthLayout } from '../layouts/AuthLayout'
 import { ProtectedRoute } from './ProtectedRoute'
@@ -28,6 +30,14 @@ export function AppRoutes() {
         </Route>
       </Route>
 
+      {/*
+        Public for everyone, also when logged in: an invite link opened on a device where someone
+        is logged in must still work (PublicOnlyRoute would redirect and lose the #token).
+      */}
+      <Route element={<AuthLayout />}>
+        <Route path="/accept-invite" element={<AcceptInvitePage />} />
+      </Route>
+
       {/* Only for logged-in users; others are sent to /login. */}
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
@@ -39,6 +49,9 @@ export function AppRoutes() {
           </Route>
           <Route element={<RequirePermission permission="PRODUCT_EDIT" />}>
             <Route path="/products/new" element={<ProductCreatePage />} />
+          </Route>
+          <Route element={<RequirePermission permission="STAFF_MANAGE" />}>
+            <Route path="/staff" element={<StaffPage />} />
           </Route>
         </Route>
       </Route>

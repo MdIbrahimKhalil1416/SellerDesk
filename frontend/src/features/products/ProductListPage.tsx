@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { Can } from '../../components/Can'
-import { ArrowLeftIcon, ArrowRightIcon, BoxIcon, PlusIcon, SearchIcon } from '../../components/icons'
+import { BoxIcon, PlusIcon, SearchIcon } from '../../components/icons'
 import { Alert } from '../../components/ui/Alert'
 import { Button } from '../../components/ui/Button'
+import { Pagination } from '../../components/ui/Pagination'
 import { Select } from '../../components/ui/Select'
-import { Spinner } from '../../components/ui/Spinner'
 import { formatPriceRange } from '../../lib/money'
 import { useDebouncedValue } from '../../lib/useDebouncedValue'
 import type { ProductListParams, ProductSort, ProductStatusFilter, ProductSummary } from '../../types/product'
@@ -258,24 +258,6 @@ function ProductCards({ products }: { products: ProductSummary[] }) {
         </li>
       ))}
     </ul>
-  )
-}
-
-function Pagination({ page, totalPages, loading, onPage }: { page: number; totalPages: number; loading: boolean; onPage: (page: number) => void }) {
-  if (totalPages <= 1) return null
-  return (
-    <nav className="mt-4 flex items-center justify-between gap-3" aria-label="Pagination">
-      <Button variant="secondary" disabled={page === 0 || loading} onClick={() => onPage(page - 1)}>
-        <ArrowLeftIcon /> Previous
-      </Button>
-      <span className="flex items-center gap-2 text-sm text-slate-600">
-        {loading && <Spinner />}
-        Page {page + 1} of {totalPages}
-      </span>
-      <Button variant="secondary" disabled={page + 1 >= totalPages || loading} onClick={() => onPage(page + 1)}>
-        Next <ArrowRightIcon />
-      </Button>
-    </nav>
   )
 }
 
