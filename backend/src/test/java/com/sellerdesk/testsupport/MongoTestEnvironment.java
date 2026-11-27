@@ -106,7 +106,10 @@ public final class MongoTestEnvironment {
 
     private static MongoDBContainer startedContainer() {
         if (container == null) {
-            container = new MongoDBContainer(MONGO_IMAGE);
+            // withReplicaSet() is required: since Testcontainers 2.x the container is a standalone
+            // mongod by default, and MongoDB transactions (e.g. register-shop) only work on a
+            // replica set. Without it every transactional request fails with 500.
+            container = new MongoDBContainer(MONGO_IMAGE).withReplicaSet();
             // No stop(): Testcontainers' cleanup container (Ryuk) removes it when the JVM exits,
             // so one container serves every test class.
             container.start();
