@@ -15,5 +15,7 @@ public interface ShopRepository extends Repository<Shop, String> {
 
     Optional<Shop> findById(String shopId);
 
+    boolean existsById(String shopId);
+
     Shop save(Shop shop);
 }

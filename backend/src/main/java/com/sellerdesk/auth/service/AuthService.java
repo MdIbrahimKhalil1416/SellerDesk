@@ -22,6 +22,7 @@ import com.sellerdesk.common.security.InvalidTokenException;
 import com.sellerdesk.common.security.JwtService;
 import com.sellerdesk.common.security.RefreshTokenClaims;
 import com.sellerdesk.common.security.Role;
+import com.sellerdesk.common.phone.BdPhone;
 import com.sellerdesk.common.util.Normalize;
 import com.sellerdesk.shop.dto.ShopSummary;
 import com.sellerdesk.shop.service.ShopService;
@@ -121,7 +122,7 @@ public class AuthService {
 
         ShopService.NewShop newShop = new ShopService.NewShop(
                 request.shopName().trim(),
-                Normalize.bdMobile(request.shopPhone()),
+                BdPhone.normalize(request.shopPhone()),
                 request.address() == null ? null : request.address().toModel(),
                 Normalize.trimToNull(request.facebookPageUrl()));
 

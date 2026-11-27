@@ -30,9 +30,20 @@ public class CacheConfig {
      */
     public static final String STAFF_PERMISSION_CATALOG = "staffPermissionCatalog";
 
+    /**
+     * Settings per shop (delivery charges, low-stock default, order number prefix), read by other
+     * modules on hot paths ({@code ShopSettingsLookup}). Every settings change evicts the shop's
+     * entry, so the 10 minutes are only a safety net.
+     */
+    public static final String SHOP_SETTINGS = "shopSettings";
+
     @Bean
     CacheManagerCustomizer<CaffeineCacheManager> perCacheSettings() {
         return cacheManager -> {
+            cacheManager.registerCustomCache(SHOP_SETTINGS, Caffeine.newBuilder()
+                    .expireAfterWrite(Duration.ofMinutes(10))
+                    .maximumSize(10_000)
+                    .build());
             cacheManager.registerCustomCache(PRODUCT_LOOKUP, Caffeine.newBuilder()
                     .expireAfterWrite(Duration.ofMinutes(10))
                     .maximumSize(1000)

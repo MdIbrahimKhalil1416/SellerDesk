@@ -1,7 +1,7 @@
 package com.sellerdesk.auth.dto;
 
 import com.sellerdesk.common.dto.AddressDto;
-import com.sellerdesk.common.util.Normalize;
+import com.sellerdesk.common.phone.BdMobile;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -27,8 +27,8 @@ public record RegisterShopRequest(
         @Schema(example = "Rahim Fashion")
         @NotBlank @Size(min = 2, max = 100) String shopName,
 
-        @Schema(example = "01712345678", description = "Bangladeshi mobile, optional +88 prefix")
-        @NotBlank @Pattern(regexp = Normalize.BD_MOBILE_INPUT_REGEX, message = "must be a Bangladeshi mobile number like 01712345678")
+        @Schema(example = "01712345678", description = "Bangladeshi mobile: 01XXXXXXXXX, +8801XXXXXXXXX or 8801XXXXXXXXX; stored as 01XXXXXXXXX")
+        @NotBlank @BdMobile
         String shopPhone,
 
         @Valid AddressDto address,

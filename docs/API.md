@@ -39,8 +39,28 @@ customer stats). Separate endpoints make each one easy to secure, document and t
 
 | Method | Path | Auth | Request → Response |
 |--------|------|------|--------------------|
-| GET | `/shop` | auth | → `ShopResponse {id, name, phone, email, address, facebookPageUrl, status, settings}` |
-| PUT | `/shop` | `SHOP_SETTINGS` | `{name, phone, email?, address?, facebookPageUrl?, settings{deliveryChargeInsideDhaka, deliveryChargeOutsideDhaka, defaultLowStockThreshold}}` → `ShopResponse` |
+| GET | `/shop` | auth | → `ShopResponse {id, name, phone, email, address, facebookPageUrl, logoUrl, status, settings{deliveryChargeInsideDhaka, deliveryChargeOutsideDhaka, defaultLowStockThreshold, orderNumberPrefix}}`. Any shop user may read it (the order form needs the delivery charges). |
+| PUT | `/shop` | `SHOP_SETTINGS` | `{name, phone, email?, address?, facebookPageUrl?, settings{deliveryChargeInsideDhaka, deliveryChargeOutsideDhaka, defaultLowStockThreshold, orderNumberPrefix}}` → `ShopResponse`. Full replace: an optional field left out is cleared. `400 VALIDATION_FAILED` with `fieldErrors`. |
+| PUT | `/shop/logo` | `SHOP_SETTINGS` | multipart `file` (JPEG/PNG/WebP, ≤ 5 MB, same checks as product images) → `200 ShopResponse`. Replaces the old logo; the old file is deleted. `400 IMAGE_TYPE_NOT_ALLOWED`, `413 IMAGE_TOO_LARGE`, `502 IMAGE_UPLOAD_FAILED`. |
+| DELETE | `/shop/logo` | `SHOP_SETTINGS` | → `200 ShopResponse` (`logoUrl: null`). The file is deleted. No logo: no change, still `200`. |
+
+Only the owner has `SHOP_SETTINGS` by default; it can be granted to staff. Missing it → `403 FORBIDDEN`.
+
+**`PUT /shop` rules** (each broken rule is one entry in `fieldErrors`, `field` as shown):
+
+| Field | Rule |
+|-------|------|
+| `name` | required, 2–100 characters, trimmed |
+| `phone` | required, Bangladeshi mobile: `01XXXXXXXXX`, `+8801XXXXXXXXX`, `8801XXXXXXXXX` (also `00880…`; spaces, dashes, dots, parentheses and Bangla digits allowed). Operator digit 3–9. Stored and returned as `01XXXXXXXXX`. |
+| `email` | optional, valid email, ≤ 254; stored lowercase |
+| `address` | optional; if given: `line` and `district` required, `zone` `INSIDE_DHAKA` / `OUTSIDE_DHAKA` |
+| `facebookPageUrl` | optional, `http(s)://…`, ≤ 300 |
+| `settings` | required |
+| `settings.deliveryChargeInsideDhaka`, `settings.deliveryChargeOutsideDhaka` | required, poisha, `0`–`500000` (৳0–৳5,000) |
+| `settings.defaultLowStockThreshold` | required, `0`–`100000` (used for variants without their own threshold) |
+| `settings.orderNumberPrefix` | required, 2–6 letters or digits (`^[A-Za-z0-9]{2,6}$`), stored uppercase. Orders copy the prefix when created, so a change only affects future orders. |
+
+Settings are cached per shop (`ShopSettingsLookup`, 10 min); `PUT /shop` evicts the shop's entry.
 
 ---
 

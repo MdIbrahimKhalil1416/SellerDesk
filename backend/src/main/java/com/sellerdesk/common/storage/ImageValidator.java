@@ -1,10 +1,11 @@
-package com.sellerdesk.product.service;
+package com.sellerdesk.common.storage;
 
 import com.sellerdesk.common.error.ImageTooLargeException;
 import org.springframework.stereotype.Component;
 
 /**
  * Checks an uploaded image before it is sent to the storage (docs/modules/PRODUCT.md §4).
+ * Used for product images and the shop logo, so both follow the same type and size rules.
  *
  * <p>The type is decided by the file's first bytes ("magic bytes"), <b>not</b> by its
  * {@code Content-Type} header or file name: the client controls both, so a renamed {@code .exe}

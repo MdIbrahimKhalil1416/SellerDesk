@@ -17,7 +17,7 @@ Legend: **Req** = required (`Y`) or optional (`N`). Types are BSON types.
 | Timestamps | `createdAt`, `updatedAt`: `Date` (UTC), set by Spring auditing. | |
 | Optimistic lock | `version: Int64` (`@Version`) on `shops`, `users`, `products`, `customers`, `orders`. | Two staff editing the same order: the second save gets `409 CONCURRENT_MODIFICATION` instead of silently overwriting. |
 | Money | `Int64` in **poisha** (1 BDT = 100 poisha). | Floating point (`double`) cannot represent 0.10 exactly. `BigDecimal` works but Spring Data stores it as a **string** by default (sorting/summing breaks) unless every field is annotated for `Decimal128`. Integers are simplest and exact. |
-| Phone | Bangladeshi mobile normalized to 11 digits `01XXXXXXXXX` before saving. `+8801...` / `8801...` are converted. Regex `^01[3-9]\d{8}$`. | Uniqueness on phone only works if every copy has the same format. |
+| Phone | Bangladeshi mobile normalized to 11 digits `01XXXXXXXXX` before saving, always through `common.phone.BdPhone` (DTOs validate with `@BdMobile`). `+8801...`, `8801...`, `00880...`, separators and Bangla digits are converted. Stored regex `^01[3-9]\d{8}$`. | Uniqueness on phone only works if every copy has the same format. |
 | Email | Trimmed, lowercased before saving. | Same reason. |
 | Enums | Stored as strings (`"CONFIRMED"`). | Readable in Atlas; safe to reorder in Java. |
 | Deletion | No hard delete of business data in Phase 1. Use `status` (`ARCHIVED`, `DISABLED`). Only exception: a product never used by any order or stock movement may be deleted (`docs/modules/PRODUCT.md`). | Orders and movements reference products/customers; deleting would break history. An unused product has no history to break. |
@@ -56,14 +56,27 @@ Not tenant-owned in the usual sense: the document's `_id` **is** the `shopId`.
 | `email` | String | N | business contact email |
 | `address` | Object `Address` | N | see §5 |
 | `facebookPageUrl` | String | N | |
+| `logo` | Object | N | `{url, publicId, width, height, bytes, format}`; file in Cloudinary under `sellerdesk/{shopId}/logo/{random id}`. `publicId` is never sent to clients. |
 | `status` | String | Y | `ACTIVE`, `SUSPENDED` |
-| `settings.deliveryChargeInsideDhaka` | Int64 | Y | poisha, default `6000` (৳60) |
-| `settings.deliveryChargeOutsideDhaka` | Int64 | Y | poisha, default `12000` (৳120) |
-| `settings.defaultLowStockThreshold` | Int32 | Y | default `5` |
+| `settings.deliveryChargeInsideDhaka` | Int64 | Y | poisha, `0`–`500000`, default `6000` (৳60) |
+| `settings.deliveryChargeOutsideDhaka` | Int64 | Y | poisha, `0`–`500000`, default `12000` (৳120) |
+| `settings.defaultLowStockThreshold` | Int32 | Y | `0`–`100000`, default `5` |
+| `settings.orderNumberPrefix` | String | Y* | 2–6 uppercase letters/digits, default `SD`. *Missing in shops created before it existed: read as `SD` (see below). |
 | `orderSeq` | Int64 | Y | last used order number; incremented atomically |
 | `version`, `createdAt`, `updatedAt` | | Y | |
 
 **Indexes:** `{ ownerUserId: 1 }` unique.
+
+**Writes.** Settings and logo changes use a targeted `$set` / `$unset` of their own fields
+(`ShopQueryRepository`), never a full-document `save`: a `save` of a shop loaded before an order
+was created would write back the old `orderSeq` and reuse an order number.
+
+**Defaults for existing shops.** New settings fields get their default **on read**: the
+`ShopSettings` record replaces a missing (`null`) `orderNumberPrefix` with `SD`. No migration
+script; the next `PUT /shop` stores the field. `logo` is optional, so a missing field means "no logo".
+
+**Logo files.** Same pipeline as product images (`docs/modules/PRODUCT.md` §4): orphan cleanup task
+before the upload, `$set` of the new logo + `REMOVED` task for the old file in one transaction.
 
 **Order numbers.** Per-shop sequence: `findAndModify({_id: shopId}, {$inc: {orderSeq: 1}}, returnNew)`.
 Atomic, no extra `counters` collection. Done **outside** any transaction: if it were inside,
@@ -312,7 +325,8 @@ the order status change, or they drift. A rebuild-from-orders admin task can rep
 |-------|------|-----|-------|
 | `_id` | ObjectId | Y | |
 | `shopId` | ObjectId | Y | |
-| `orderNumber` | Int64 | Y | per-shop sequence; shown as `#1042` |
+| `orderNumber` | Int64 | Y | per-shop sequence |
+| `orderNumberPrefix` | String | Y | copy of `shops.settings.orderNumberPrefix` at creation; shown as `SD-1042`. A copy, so changing the shop's prefix never renames existing orders. |
 | `customerId` | ObjectId | Y | |
 | `customer.name` | String | Y | snapshot |
 | `customer.phone` | String | Y | snapshot |

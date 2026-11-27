@@ -5,6 +5,8 @@ import com.sellerdesk.common.security.CurrentUser;
 import com.sellerdesk.common.storage.ImageCleanupTasks;
 import com.sellerdesk.common.storage.ImageStorage;
 import com.sellerdesk.common.storage.ImageStorageException;
+import com.sellerdesk.common.storage.ImageUploadFailedException;
+import com.sellerdesk.common.storage.ImageValidator;
 import com.sellerdesk.common.storage.ImagesRemovedEvent;
 import com.sellerdesk.common.storage.StoredImage;
 import com.sellerdesk.product.dto.ProductResponse;

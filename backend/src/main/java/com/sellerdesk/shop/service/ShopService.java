@@ -2,15 +2,23 @@ package com.sellerdesk.shop.service;
 
 import com.sellerdesk.common.error.ResourceNotFoundException;
 import com.sellerdesk.common.model.Address;
+import com.sellerdesk.common.phone.BdPhone;
 import com.sellerdesk.common.security.CurrentUser;
+import com.sellerdesk.common.util.Normalize;
 import com.sellerdesk.shop.dto.ShopResponse;
 import com.sellerdesk.shop.dto.ShopSummary;
+import com.sellerdesk.shop.dto.UpdateShopRequest;
 import com.sellerdesk.shop.model.Shop;
 import com.sellerdesk.shop.model.ShopSettings;
 import com.sellerdesk.shop.model.ShopStatus;
+import com.sellerdesk.shop.repository.ShopQueryRepository;
 import com.sellerdesk.shop.repository.ShopRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.Locale;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -18,7 +26,10 @@ import org.springframework.stereotype.Service;
 public class ShopService {
 
     private final ShopRepository shopRepository;
+    private final ShopQueryRepository shopQueryRepository;
+    private final ShopSettingsLookup settingsLookup;
     private final CurrentUser currentUser;
+    private final Clock clock;
 
     /** Values for a new shop, already validated and normalized by the caller. */
     public record NewShop(String name, String phone, Address address, String facebookPageUrl) {
@@ -56,6 +67,50 @@ public class ShopService {
         String shopId = currentUser.shopId();
         return shopRepository.findById(shopId)
                 .map(ShopResponse::from)
-                .orElseThrow(() -> ResourceNotFoundException.of("Shop"));
+                .orElseThrow(ShopService::shopNotFound);
+    }
+
+    /**
+     * Replaces profile and settings of the logged-in user's shop ({@code PUT /shop}). The request
+     * is already validated ({@code @Valid}); here it is normalized: phone to {@code 01XXXXXXXXX},
+     * email to lowercase, prefix to uppercase, blank optional fields to "not set".
+     *
+     * <p>Only the fields of the form are written (one {@code $set}), never {@code orderSeq},
+     * {@code status}, {@code ownerUserId} or the logo. Then the cached settings are evicted.
+     */
+    public ShopResponse update(UpdateShopRequest request) {
+        String shopId = currentUser.shopId();
+        UpdateShopRequest.Settings s = request.settings();
+        ShopSettings settings = new ShopSettings(
+                s.deliveryChargeInsideDhaka(),
+                s.deliveryChargeOutsideDhaka(),
+                s.defaultLowStockThreshold(),
+                s.orderNumberPrefix().toUpperCase(Locale.ROOT));
+
+        Update update = new Update()
+                .set("name", request.name().trim())
+                .set("phone", BdPhone.normalize(request.phone()))
+                .set("settings", settings);
+        setOrUnset(update, "email", Normalize.trimToNull(Normalize.email(request.email())));
+        setOrUnset(update, "address", request.address() == null ? null : request.address().toModel());
+        setOrUnset(update, "facebookPageUrl", Normalize.trimToNull(request.facebookPageUrl()));
+
+        Shop updated = shopQueryRepository.updateAndGet(shopId, update, Instant.now(clock))
+                .orElseThrow(ShopService::shopNotFound);
+        settingsLookup.evict(shopId);
+        return ShopResponse.from(updated);
+    }
+
+    static ResourceNotFoundException shopNotFound() {
+        return ResourceNotFoundException.of("Shop");
+    }
+
+    /** An empty optional field is removed from the document instead of stored as {@code null}. */
+    private static void setOrUnset(Update update, String field, Object value) {
+        if (value == null) {
+            update.unset(field);
+        } else {
+            update.set(field, value);
+        }
     }
 }

@@ -14,6 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.sellerdesk.common.phone.BdPhone;
 import com.sellerdesk.auth.dto.MeResponse;
 import com.sellerdesk.auth.dto.OtpSentResponse;
 import com.sellerdesk.auth.dto.RegisterShopResponse;
@@ -188,7 +189,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.fieldErrors[*].message").value(hasItems(
                         "must be between 8 and 72 characters",
                         "must contain at least one letter",
-                        "must be a Bangladeshi mobile number like 01712345678")));
+                        BdPhone.INVALID_MESSAGE)));
     }
 
     @Test

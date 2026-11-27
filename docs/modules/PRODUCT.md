@@ -264,7 +264,7 @@ Inventory and Order call `ProductService` methods directly; no events are needed
 ```
 com.sellerdesk.product
 ├── controller  ProductController, ProductImageController
-├── service     ProductService, ProductImageService, ImageValidator, ProductMapper,
+├── service     ProductService, ProductImageService, ProductMapper,
 │               ProductUsageChecker, ProductLookupCacheEvictor, events
 ├── repository  ProductRepository (Repository<Product, String>, shopId methods only),
 │               ProductQueryRepository (MongoTemplate: search, targeted updates, lookup, categories)
@@ -272,7 +272,8 @@ com.sellerdesk.product
 └── model       Product, Variant, VariantStock, ProductImage, ProductStatus
 com.sellerdesk.common.storage
     ImageStorage, CloudinaryImageStorage, ImageCleanupTask (+ repository), ImageCleanupJob,
-    ImageCleanupListener
+    ImageCleanupListener, ImageValidator, ImageTypeNotAllowedException, ImageUploadFailedException
+    (shared with the shop logo, so both uploads follow the same rules)
 com.sellerdesk.common.security
     TenantCriteria.of(shopId)   (start of every MongoTemplate tenant query, SECURITY.md §4)
 ```

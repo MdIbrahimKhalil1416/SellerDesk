@@ -16,8 +16,6 @@ public final class ProductErrors {
     public static final String DUPLICATE_VARIANT_ATTRIBUTES = "DUPLICATE_VARIANT_ATTRIBUTES";
     public static final String VARIANT_LIMIT_REACHED = "VARIANT_LIMIT_REACHED";
     public static final String IMAGE_LIMIT_REACHED = "IMAGE_LIMIT_REACHED";
-    public static final String IMAGE_TYPE_NOT_ALLOWED = "IMAGE_TYPE_NOT_ALLOWED";
-    public static final String IMAGE_UPLOAD_FAILED = "IMAGE_UPLOAD_FAILED";
     public static final String PRODUCT_IN_USE = "PRODUCT_IN_USE";
 
     private ProductErrors() {

@@ -1,4 +1,4 @@
-package com.sellerdesk.product.service;
+package com.sellerdesk.common.storage;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

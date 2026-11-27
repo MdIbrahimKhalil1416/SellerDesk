@@ -44,11 +44,17 @@ public class Shop extends AuditableDocument {
 
     private String facebookPageUrl;
 
+    /** {@code null} = no logo. */
+    private ShopLogo logo;
+
     private ShopStatus status;
 
     private ShopSettings settings = ShopSettings.defaults();
 
-    /** Last used order number. Incremented atomically when an order is created. */
+    /**
+     * Last used order number. Incremented atomically when an order is created. Settings updates
+     * never write this field (they use a targeted {@code $set}), so they cannot reset it.
+     */
     private long orderSeq;
 
     @Version

@@ -16,6 +16,7 @@ import com.sellerdesk.common.security.JwtService;
 import com.sellerdesk.common.security.Role;
 import com.sellerdesk.common.security.TenantContext;
 import com.sellerdesk.product.ProductTestApi;
+import com.sellerdesk.shop.ShopTestApi;
 import com.sellerdesk.staff.StaffTestApi;
 import com.sellerdesk.testsupport.MongoIntegrationTestBase;
 import com.sellerdesk.testsupport.TestImages;
@@ -57,11 +58,16 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  *       be saved with A's shopId.</li>
  *   <li>Every referenced id (customerId, variantId...) from shop B must give {@code 404}.</li>
  * </ol>
+ * The shop itself has no {@code {id}} endpoints ({@link ShopSettings}): there the shop always
+ * comes from the token.
  */
 class TenantIsolationTest extends MongoIntegrationTestBase {
 
     @Autowired
     private AppProperties appProperties;
+
+    @Autowired
+    private org.springframework.context.ApplicationContext applicationContext;
 
     private TestOwner shopA;
     private TestOwner shopB;
@@ -595,6 +601,74 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
         private String bodyWithStatus(MockHttpServletRequestBuilder request, int expectedStatus) throws Exception {
             return mockMvc.perform(request).andExpect(status().is(expectedStatus))
                     .andReturn().getResponse().getContentAsString();
+        }
+    }
+
+    /**
+     * Shop settings ({@code PUT /shop}, {@code PUT/DELETE /shop/logo}). There is no
+     * {@code /shop/{id}}: the shop is always the one in the token, so the attacks left are a
+     * {@code shopId} smuggled into the body, query or header, and a cache shared across shops.
+     */
+    @Nested
+    class ShopSettings {
+
+        private org.bson.Document storedShop(TestOwner owner) {
+            return mongoTemplate.findById(new org.bson.types.ObjectId(owner.shopId()), org.bson.Document.class, "shops");
+        }
+
+        @Test
+        void shopIdOfBInBodyQueryAndHeaderChangesOnlyShopA() throws Exception {
+            org.bson.Document shopBBefore = storedShop(shopB);
+            String json = ShopTestApi.updateJson("Changed By A", "01812345678", "AAA")
+                    .replaceFirst("\\{", "{\"shopId\":\"" + shopB.shopId() + "\",\"id\":\"" + shopB.shopId() + "\",");
+
+            mockMvc.perform(ShopTestApi.update(json).param("shopId", shopB.shopId()).header("X-Shop-Id", shopB.shopId())
+                            .header("Authorization", shopA.bearer()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(shopA.shopId()))
+                    .andExpect(jsonPath("$.name").value("Changed By A"));
+
+            assertThat(storedShop(shopA).getString("name")).isEqualTo("Changed By A");
+            assertThat(storedShop(shopB)).isEqualTo(shopBBefore);
+            mockMvc.perform(get("/api/v1/shop").header("Authorization", shopB.bearer()))
+                    .andExpect(jsonPath("$.name").value(shopB.shopName()))
+                    .andExpect(jsonPath("$.settings.orderNumberPrefix").value("SD"));
+        }
+
+        @Test
+        void logoOfAIsStoredForAAndNeverTouchesB() throws Exception {
+            mockMvc.perform(ShopTestApi.uploadLogo(TestImages.png()).header("Authorization", shopB.bearer()))
+                    .andExpect(status().isOk());
+            org.bson.Document shopBBefore = storedShop(shopB);
+
+            mockMvc.perform(ShopTestApi.uploadLogo(TestImages.png()).param("shopId", shopB.shopId())
+                            .header("Authorization", shopA.bearer()))
+                    .andExpect(status().isOk());
+            assertThat(storedShop(shopA).get("logo", org.bson.Document.class).getString("publicId"))
+                    .startsWith("sellerdesk/" + shopA.shopId() + "/logo/");
+
+            // A removes "its" logo: B's logo and file stay.
+            mockMvc.perform(delete("/api/v1/shop/logo").param("shopId", shopB.shopId())
+                            .header("Authorization", shopA.bearer()))
+                    .andExpect(status().isOk());
+            assertThat(storedShop(shopB)).isEqualTo(shopBBefore);
+            String logoOfB = shopBBefore.get("logo", org.bson.Document.class).getString("publicId");
+            Thread.sleep(200); // give the async cleanup listener a chance to (wrongly) run
+            assertThat(imageStorage.deletes()).doesNotContain(logoOfB);
+        }
+
+        @Test
+        void cachedSettingsArePerShop() throws Exception {
+            com.sellerdesk.shop.service.ShopSettingsLookup lookup =
+                    applicationContext.getBean(com.sellerdesk.shop.service.ShopSettingsLookup.class);
+            assertThat(lookup.forShop(shopA.shopId()).orderNumberPrefix()).isEqualTo("SD");
+
+            mockMvc.perform(ShopTestApi.update(ShopTestApi.updateJson("Shop B", "01812345678", "BBB"))
+                            .header("Authorization", shopB.bearer()))
+                    .andExpect(status().isOk());
+
+            assertThat(lookup.forShop(shopB.shopId()).orderNumberPrefix()).isEqualTo("BBB");
+            assertThat(lookup.forShop(shopA.shopId()).orderNumberPrefix()).isEqualTo("SD");
         }
     }
 
