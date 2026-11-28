@@ -113,11 +113,20 @@ through Inventory.
 
 ## 5. Inventory
 
+Full design: `modules/INVENTORY.md`. Order-driven stock changes (reserve, release, deduct,
+return) have no endpoint; they happen inside order status changes.
+
 | Method | Path | Auth | Request → Response |
 |--------|------|------|--------------------|
-| GET | `/inventory` | `STOCK_VIEW` | `?q=&lowStock=true&page=` → page of `StockRow {productId, productName, variantId, sku, variantName, onHand, reserved, available, lowStockThreshold, isLow}` (one row per variant) |
-| POST | `/inventory/adjustments` | `STOCK_ADJUST` | `{productId, variantId, type: ADJUST_IN or ADJUST_OUT, quantity (≥1), reason}` → `201 {movement, stock{onHand, reserved, available}}`. `409 INSUFFICIENT_STOCK` if `ADJUST_OUT` would make `available < 0` (reserved units cannot be removed). |
-| GET | `/inventory/movements` | `STOCK_VIEW` | `?productId=&variantId=&type=&orderId=&from=&to=` → page of `MovementResponse {id, sku, type, quantity, onHandAfter, reservedAfter, orderId, orderNumber, reason, performedBy{id, name}, createdAt}`, newest first |
+| GET | `/inventory` | `STOCK_VIEW` | `?q=&stockStatus=ALL\|LOW\|OUT\|LOW_OR_OUT&includeInactive=false&sort=name,asc\|available,asc&page=&size=` → page of `StockRow {productId, productName, coverImageUrl, productStatus, variantId, sku, variantName, active, onHand, reserved, available, lowStockThreshold (effective), thresholdSource: VARIANT\|SHOP, stockStatus: IN_STOCK\|LOW\|OUT}` (one row per variant) |
+| GET | `/inventory/low-stock` | `STOCK_VIEW` | `?page=&size=` → page of `StockRow`: `LOW` or `OUT`, active only, lowest `available` first |
+| GET | `/inventory/variants/{variantId}` | `STOCK_VIEW` | → `{row: StockRow, recentMovements: [MovementResponse] (last 10)}` |
+| POST | `/inventory/variants/{variantId}/restock` | `STOCK_ADJUST` | `{quantity (1–100000), note?, requestId (UUID)}` → `201 {movement, stock{onHand, reserved, available}}`. First stock-in of a variant is recorded as `INITIAL`, later ones as `RESTOCK`. `409 STOCK_LIMIT_EXCEEDED` above 1,000,000 on hand. |
+| POST | `/inventory/variants/{variantId}/adjustments` | `STOCK_ADJUST` | `{quantityChange (≠0, −100000…100000), reasonCode (DAMAGED\|LOST\|FOUND\|COUNT_CORRECTION\|OTHER), note? (≤200, required for OTHER), requestId (UUID)}` → `201 {movement, stock}`. `409 INSUFFICIENT_STOCK` if a decrease would make `available < 0` (reserved units cannot be removed). |
+| GET | `/inventory/movements` | `STOCK_VIEW` | `?variantId=&productId=&type=&reasonCode=&orderId=&from=&to=&page=&size=` → page of `MovementResponse {id, productId, variantId, sku, variantName, type, onHandDelta, reservedDelta, onHandAfter, reservedAfter, availableAfter, reasonCode, note, orderId, orderNumber, createdBy{id, name}, createdAt}`, newest first |
+
+A repeated `requestId` returns the first result without applying the change again; the same
+`requestId` with a different change → `409 REQUEST_ID_REUSED`. Another shop's `variantId` → `404`.
 
 ---
 
@@ -146,9 +155,9 @@ No delete in Phase 1 (orders reference customers).
 | PUT | `/orders/{id}` | `ORDER_EDIT` | Same shape as create. PENDING: everything editable. CONFIRMED/PACKED: only `address`, `note`. SHIPPED: only `note`. Else `409 ORDER_NOT_EDITABLE`. Uses `version` → `409 CONCURRENT_MODIFICATION`. |
 | POST | `/orders/{id}/confirm` | `ORDER_CONFIRM` | `{note?}` → `OrderResponse`. Reserves stock in one transaction. `409 INSUFFICIENT_STOCK` (lists SKUs) or `INVALID_STATUS_TRANSITION`. |
 | POST | `/orders/{id}/pack` | `ORDER_FULFILL` | `{note?}` → `OrderResponse` |
-| POST | `/orders/{id}/ship` | `ORDER_FULFILL` | `{courierName?, trackingId?, note?}` → `OrderResponse`. Stock `SHIP_OUT`. |
+| POST | `/orders/{id}/ship` | `ORDER_FULFILL` | `{courierName?, trackingId?, note?}` → `OrderResponse`. Stock `DEDUCT`. |
 | POST | `/orders/{id}/deliver` | `ORDER_CLOSE` | `{note?}` → `OrderResponse`. Updates customer stats. |
-| POST | `/orders/{id}/return` | `ORDER_CLOSE` | `{reason, restock (default true)}` → `OrderResponse`. Stock `RETURN_IN` if restock. |
+| POST | `/orders/{id}/return` | `ORDER_CLOSE` | `{reason, items?: [{variantId, restock}]}` → `OrderResponse`. Per item: `restock` defaults to `true` (items left out are restocked); only restocked items get a `RETURN` movement (`modules/INVENTORY.md` §1). |
 | POST | `/orders/{id}/cancel` | `ORDER_CANCEL` | `{reason}` → `OrderResponse`. Allowed from PENDING, CONFIRMED, PACKED. Releases reserved stock. |
 
 ### Create order request

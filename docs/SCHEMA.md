@@ -246,6 +246,8 @@ becomes a bottleneck, stock can move to its own `inventory_items` collection.
 
 ## 7. `stock_movements` (append-only log)
 
+Full design: `modules/INVENTORY.md` §3–§4. Summary:
+
 | Field | Type | Req | Notes |
 |-------|------|-----|-------|
 | `_id` | ObjectId | Y | |
@@ -253,35 +255,38 @@ becomes a bottleneck, stock can move to its own `inventory_items` collection.
 | `productId` | ObjectId | Y | |
 | `variantId` | ObjectId | Y | |
 | `sku` | String | Y | snapshot |
-| `type` | String | Y | see below |
-| `quantity` | Int32 | Y | always positive; `type` gives the direction |
-| `onHandAfter` | Int32 | Y | snapshot after the change |
-| `reservedAfter` | Int32 | Y | snapshot after the change |
+| `variantName` | String | Y | snapshot |
+| `type` | String | Y | `INITIAL`, `RESTOCK`, `ADJUSTMENT`, `RESERVE`, `RELEASE`, `DEDUCT`, `RETURN` |
+| `onHandDelta` | Int32 | Y | signed change of `onHand` |
+| `reservedDelta` | Int32 | Y | signed change of `reserved` |
+| `onHandAfter`, `reservedAfter`, `availableAfter` | Int32 | Y | balances after the change (from `findAndModify` returning the new document) |
+| `reasonCode` | String | N | `ADJUSTMENT` only, required: `DAMAGED`, `LOST`, `FOUND`, `COUNT_CORRECTION`, `OTHER` |
+| `note` | String | N | ≤ 200; required when `reasonCode = OTHER` |
 | `orderId` | ObjectId | N | for order-driven movements |
-| `orderNumber` | Int64 | N | snapshot, for display |
-| `reason` | String | N | required for manual adjustments |
-| `performedBy` | ObjectId | Y | → `users._id` |
+| `orderNumber` | String | N | display snapshot, e.g. `SD-1042` |
+| `requestId` | String | N | client UUID for restock / adjustment (idempotency) |
+| `createdBy` | ObjectId | Y | → `users._id` |
+| `createdByName` | String | Y | snapshot |
 | `createdAt` | Date | Y | |
 
-**`type` values and their effect**
+**`type` values and their effect** (`q` > 0)
 
 | type | onHand | reserved | available | Trigger |
 |------|--------|----------|-----------|---------|
-| `INITIAL` | +q | | +q | opening stock, entered through Inventory (products are created with stock 0) |
-| `ADJUST_IN` | +q | | +q | manual (purchase, found stock) |
-| `ADJUST_OUT` | −q | | −q | manual (damage, loss); cannot make available < 0 |
+| `INITIAL` | +q | | +q | first stock-in of a variant (automatic; products are created with stock 0) |
+| `RESTOCK` | +q | | +q | stock-in (purchase) |
+| `ADJUSTMENT` | ±q | | ±q | manual correction, `reasonCode` required; a decrease cannot make available < 0 |
 | `RESERVE` | | +q | −q | order → CONFIRMED |
 | `RELEASE` | | −q | +q | CONFIRMED/PACKED order → CANCELLED |
-| `SHIP_OUT` | −q | −q | | order → SHIPPED |
-| `RETURN_IN` | +q | | +q | order → RETURNED with `restock = true` |
-
-`onHandAfter` / `reservedAfter` come from the updated product document (`findAndModify`
-returning the new version).
+| `DEDUCT` | −q | −q | | order → SHIPPED |
+| `RETURN` | +q | | +q | order → RETURNED with `restock = true` |
 
 **Indexes:**
 - `{ shopId: 1, variantId: 1, createdAt: -1 }`: history of one variant.
 - `{ shopId: 1, createdAt: -1 }`: shop-wide log with date filter.
-- `{ shopId: 1, orderId: 1 }`: movements of one order.
+- `{ shopId: 1, productId: 1, createdAt: -1 }`: history of one product; "is this product used?".
+- `{ shopId: 1, orderId: 1 }`, partial (`orderId` exists): movements of one order.
+- `{ shopId: 1, requestId: 1 }` **unique**, partial (`requestId` exists): idempotency.
 
 Never updated or deleted. Corrections are new movements.
 
@@ -376,9 +381,9 @@ the order status change, or they drift. A rebuild-from-orders admin task can rep
 | (create) → PENDING | none | `totalOrders +1`, `lastOrderAt` | items, prices, address |
 | PENDING → CONFIRMED | `RESERVE` each item | | address, note |
 | CONFIRMED → PACKED | none | | address, note |
-| PACKED → SHIPPED | `SHIP_OUT` each item | | note only |
+| PACKED → SHIPPED | `DEDUCT` each item | | note only |
 | SHIPPED → DELIVERED | none | `deliveredOrders +1`, `totalSpent += total` | none |
-| SHIPPED → RETURNED | `RETURN_IN` if restock | `returnedOrders +1` | none |
+| SHIPPED → RETURNED | `RETURN` if restock | `returnedOrders +1` | none |
 | PENDING → CANCELLED | none | `cancelledOrders +1` | none |
 | CONFIRMED / PACKED → CANCELLED | `RELEASE` each item | `cancelledOrders +1` | none |
 
@@ -410,11 +415,11 @@ means each shop's data is one contiguous range in the index.
 | Operation | Documents changed together |
 |-----------|----------------------------|
 | **Order confirm** | order status; each item's variant stock (`RESERVE`), possibly in several products; one `stock_movements` entry per item |
-| Order ship | order; stock (`SHIP_OUT`) per item; movements |
+| Order ship | order; stock (`DEDUCT`) per item; movements |
 | Order cancel (from CONFIRMED/PACKED) | order; stock (`RELEASE`); movements; customer stats |
-| Order deliver / return | order; customer stats; (return) stock `RETURN_IN` + movements |
+| Order deliver / return | order; customer stats; (return) stock `RETURN` + movements |
 | Order create | order; customer stats (and customer insert if new) |
-| Manual stock adjustment | product stock; one movement |
+| Restock, manual stock adjustment | product stock; one movement (`modules/INVENTORY.md` §4) |
 | Shop registration | shop; owner user |
 | Staff invitation accept | new staff user; invitation `ACCEPTED` |
 
@@ -433,7 +438,7 @@ always atomic in MongoDB.
 | Limitation | Effect | Our handling |
 |------------|--------|--------------|
 | Requires a **replica set** | A plain standalone `mongod` cannot run transactions. | Atlas clusters (including free M0) are replica sets. Tests use Testcontainers `MongoDBContainer`, which starts a single-node replica set. Local Docker Mongo must be started with `--replSet`. |
-| **No lock waiting**: concurrent writes to the same document fail fast with `WriteConflict` (`TransientTransactionError`) | Two orders confirming the same variant at the same moment: one aborts. | Retry the whole transaction up to 3 times on `TransientTransactionError` / `UnknownTransactionCommitResult`. Spring's `@Transactional` does **not** retry by itself (unlike the driver's `withTransaction`), so we add a small retry wrapper around the service call. |
+| **No lock waiting**: concurrent writes to the same document fail fast with `WriteConflict` (`TransientTransactionError`) | Two orders confirming the same variant at the same moment: one aborts. | Retry the whole transaction up to 3 times on `TransientTransactionError` / `UnknownTransactionCommitResult`. Spring's `@Transactional` does **not** retry by itself (unlike the driver's `withTransaction`), so a small retry wrapper (`common.transaction.TransactionRunner`, `modules/INVENTORY.md` §2) runs the service call again. |
 | Default **60 s** max lifetime | Long transactions are aborted. | Keep transactions small: only DB writes; send emails and do slow work after commit. |
 | Slower than single-document writes | Extra round-trips, more server memory. | Use only where listed above. |
 | `@Transactional` works only through the Spring proxy | Calling a `@Transactional` method from the same class skips the transaction. | Transactional methods are public service methods called from controllers or other services. |
