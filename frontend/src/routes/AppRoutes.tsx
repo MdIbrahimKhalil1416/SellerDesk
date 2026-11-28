@@ -5,6 +5,9 @@ import { RegisterPage } from '../features/auth/RegisterPage'
 import { ResetPasswordPage } from '../features/auth/ResetPasswordPage'
 import { VerifyEmailPage } from '../features/auth/VerifyEmailPage'
 import { DashboardPage } from '../features/dashboard/DashboardPage'
+import { CustomerCreatePage } from '../features/customers/CustomerCreatePage'
+import { CustomerDetailPage } from '../features/customers/CustomerDetailPage'
+import { CustomerListPage } from '../features/customers/CustomerListPage'
 import { InventoryPage } from '../features/inventory/InventoryPage'
 import { VariantStockPage } from '../features/inventory/VariantStockPage'
 import { ProductCreatePage } from '../features/products/ProductCreatePage'
@@ -57,6 +60,14 @@ export function AppRoutes() {
           <Route element={<RequirePermission permission="STOCK_VIEW" />}>
             <Route path="/inventory" element={<InventoryPage />} />
             <Route path="/inventory/variants/:variantId" element={<VariantStockPage />} />
+          </Route>
+          {/* Without CUSTOMER_EDIT the pages are read-only; creating needs CUSTOMER_EDIT. */}
+          <Route element={<RequirePermission permission="CUSTOMER_VIEW" />}>
+            <Route path="/customers" element={<CustomerListPage />} />
+            <Route path="/customers/:id" element={<CustomerDetailPage />} />
+          </Route>
+          <Route element={<RequirePermission permission="CUSTOMER_EDIT" />}>
+            <Route path="/customers/new" element={<CustomerCreatePage />} />
           </Route>
           <Route element={<RequirePermission permission="STAFF_MANAGE" />}>
             <Route path="/staff" element={<StaffPage />} />

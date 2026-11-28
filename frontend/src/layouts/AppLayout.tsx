@@ -22,7 +22,7 @@ const NAV: NavItem[] = [
   { label: 'Orders', icon: <OrdersIcon /> },
   { label: 'Products', to: '/products', icon: <BoxIcon />, permission: 'PRODUCT_VIEW' },
   { label: 'Inventory', to: '/inventory', icon: <LayersIcon />, permission: 'STOCK_VIEW' },
-  { label: 'Customers', icon: <UsersIcon /> },
+  { label: 'Customers', to: '/customers', icon: <UsersIcon />, permission: 'CUSTOMER_VIEW' },
   { label: 'Staff', to: '/staff', icon: <ShieldIcon />, permission: 'STAFF_MANAGE' },
   { label: 'Settings', to: '/settings', icon: <SettingsIcon />, permission: 'SHOP_SETTINGS' },
 ]

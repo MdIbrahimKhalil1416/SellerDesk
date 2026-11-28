@@ -294,30 +294,44 @@ Never updated or deleted. Corrections are new movements.
 
 ## 8. `customers`
 
+Full design: `modules/CUSTOMER.md` §2 (built: `customer.model.Customer`).
+
 | Field | Type | Req | Notes |
 |-------|------|-----|-------|
 | `_id` | ObjectId | Y | |
 | `shopId` | ObjectId | Y | |
-| `name` | String | Y | |
-| `nameLower` | String | Y | for prefix search |
-| `phone` | String | Y | normalized; unique per shop |
-| `altPhone` | String | N | |
+| `name` | String | Y | 1–100, trimmed, single spaces |
+| `nameLower` | String | Y | for prefix search and sort |
+| `phone` | String | Y | `01XXXXXXXXX` (BdPhone); unique per shop |
+| `altPhone` | String | N | normalized; not unique; differs from `phone` |
+| `phoneKeys` | Array\<String\> | Y | `[phone, altPhone?]`: phone prefix search |
+| `phoneKeysReversed` | Array\<String\> | Y | the same numbers reversed: "ends with" search |
 | `facebookProfileUrl` | String | N | |
-| `addresses` | Array\<Address\> | N | max 5; first is default |
-| `note` | String | N | |
-| `tags` | Array\<String\> | N | e.g. "VIP" |
+| `addresses` | Array\<CustomerAddress\> | Y | 0–5: `{addressId, label?, line, area?, district, zone, note?, isDefault}`; exactly one default when not empty |
+| `addressRevision` | Int32 | Y | +1 on every address change; address updates compare-and-set on it. Internal. |
+| `note` | String | N | ≤ 1000 |
+| `tags` | Array\<String\> | Y | 0–10, as typed |
+| `tagKeys` | Array\<String\> | Y | lowercase `tags` |
+| `status` | String | Y | `ACTIVE`, `ARCHIVED` (no delete) |
 | `stats.totalOrders` | Int32 | Y | orders created |
 | `stats.deliveredOrders` | Int32 | Y | |
 | `stats.returnedOrders` | Int32 | Y | |
 | `stats.cancelledOrders` | Int32 | Y | |
 | `stats.totalSpent` | Int64 | Y | poisha, sum of delivered order totals |
 | `stats.lastOrderAt` | Date | N | |
-| `version`, `createdAt`, `updatedAt`, `createdBy` | | Y | |
+| `version`, `createdAt`, `updatedAt`, `createdBy` | | Y | `version` guards profile and status edits only |
 
 **Indexes:**
 - `{ shopId: 1, phone: 1 }` **unique**: the same phone can exist in two shops, but only once per shop.
-- `{ shopId: 1, nameLower: 1 }`: prefix search.
-- `{ shopId: 1, createdAt: -1 }`: default list.
+- `{ shopId: 1, status: 1, nameLower: 1 }`: name prefix search, sort by name.
+- `{ shopId: 1, status: 1, createdAt: -1 }`: default list.
+- `{ shopId: 1, phoneKeys: 1 }`, `{ shopId: 1, phoneKeysReversed: 1 }`: phone search (multikey).
+- `{ shopId: 1, tagKeys: 1 }`: tag filter and tag list (multikey).
+
+**Writes.** Only `create` saves the whole document. Profile/status: targeted `$set` with
+`{_id, shopId, version}`. Addresses: the array is replaced with a compare-and-set on
+`addressRevision`. Counters: `$inc` / `$max` through `CustomerService.record*`, inside the order
+transaction. So an edit can never write back old counters.
 
 Stats are denormalized: fast to read, but they must be updated in the same transaction as
 the order status change, or they drift. A rebuild-from-orders admin task can repair them if needed.

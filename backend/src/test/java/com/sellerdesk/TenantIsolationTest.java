@@ -344,7 +344,7 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
      * }
      * }</pre>
      *
-     * Modules still to add: Customers, Orders. Done: {@link Products}, {@link Staff}, {@link Inventory}.
+     * Modules still to add: Orders. Done: {@link Products}, {@link Staff}, {@link Inventory}, {@link Customers}.
      */
     @Nested
     class CrossTenantById {
@@ -784,6 +784,109 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
 
         private org.bson.Document document(String collection, String id) {
             return mongoTemplate.findById(new org.bson.types.ObjectId(id), org.bson.Document.class, collection);
+        }
+    }
+
+    // ==== 10. Customers =================================================================
+
+    /**
+     * Customers (docs/modules/CUSTOMER.md §7). Ids of another shop must look like unknown ids,
+     * the same phone may exist in both shops, and phone lookup / search never cross shops.
+     */
+    @Nested
+    class Customers {
+
+        private com.sellerdesk.customer.CustomerTestApi api;
+        private String customerOfB;
+        private String addressOfB;
+
+        @BeforeEach
+        void shopBHasACustomer() throws Exception {
+            api = new com.sellerdesk.customer.CustomerTestApi(mockMvc);
+            String created = api.createOk(shopB.bearer(), "Beta Buyer", "01712345678");
+            customerOfB = com.sellerdesk.customer.CustomerTestApi.id(created);
+            addressOfB = com.sellerdesk.customer.CustomerTestApi.addressId(created, 0);
+        }
+
+        @Test
+        void otherShopsCustomerIsNotFoundOnEveryIdEndpoint() throws Exception {
+            org.bson.Document before = customerDocument(customerOfB);
+            assertHiddenFromOtherShop("/api/v1/customers/" + customerOfB);
+
+            String json = MediaType.APPLICATION_JSON_VALUE;
+            assertNotFoundForA(put("/api/v1/customers/{id}", customerOfB).contentType(json)
+                    .content("{\"name\":\"Hacked\",\"phone\":\"01712345678\",\"version\":0}"));
+            assertNotFoundForA(patch("/api/v1/customers/{id}/status", customerOfB).contentType(json)
+                    .content("{\"status\":\"ARCHIVED\",\"version\":0}"));
+            assertNotFoundForA(post("/api/v1/customers/{id}/addresses", customerOfB).contentType(json)
+                    .content(com.sellerdesk.customer.CustomerTestApi.addressJson("Hacked", true)));
+            assertNotFoundForA(put("/api/v1/customers/{id}/addresses/{a}", customerOfB, addressOfB).contentType(json)
+                    .content(com.sellerdesk.customer.CustomerTestApi.addressJson("Hacked", true)));
+            assertNotFoundForA(delete("/api/v1/customers/{id}/addresses/{a}", customerOfB, addressOfB));
+
+            assertThat(customerDocument(customerOfB)).isEqualTo(before);
+        }
+
+        @Test
+        void addressIdOfShopBIsNotFoundOnShopAsCustomer() throws Exception {
+            String customerOfA = com.sellerdesk.customer.CustomerTestApi.id(api.createOk(shopA.bearer(), "Alpha Buyer", "01812345678"));
+            String json = MediaType.APPLICATION_JSON_VALUE;
+
+            assertNotFoundForA(put("/api/v1/customers/{id}/addresses/{a}", customerOfA, addressOfB).contentType(json)
+                    .content(com.sellerdesk.customer.CustomerTestApi.addressJson("X", false)));
+            assertNotFoundForA(delete("/api/v1/customers/{id}/addresses/{a}", customerOfA, addressOfB));
+        }
+
+        @Test
+        void listSearchLookupAndTagsShowOnlyOwnCustomers() throws Exception {
+            mockMvc.perform(put("/api/v1/customers/{id}", customerOfB).header("Authorization", shopB.bearer())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"name\":\"Beta Buyer\",\"phone\":\"01712345678\",\"tags\":[\"B-ONLY\"],\"version\":0}"))
+                    .andExpect(status().isOk());
+            api.createOk(shopA.bearer(), "Alpha Buyer", "01812345678");
+
+            String all = body(get("/api/v1/customers?status=ALL").header("Authorization", shopA.bearer()));
+            assertThat(all).contains("Alpha Buyer").doesNotContain("Beta Buyer").doesNotContain(customerOfB)
+                    .contains("\"totalElements\":1");
+            for (String q : new String[] {"Beta", "0171", "5678", "01712345678"}) {
+                String found = body(get("/api/v1/customers").param("q", q).header("Authorization", shopA.bearer()));
+                assertThat(found).as(q).doesNotContain("Beta Buyer");
+            }
+            String tags = body(get("/api/v1/customers/tags").header("Authorization", shopA.bearer()));
+            assertThat(tags).doesNotContain("B-ONLY");
+
+            String lookup = mockMvc.perform(get("/api/v1/customers/lookup").param("phone", "01712345678")
+                            .header("Authorization", shopA.bearer()))
+                    .andExpect(status().isNotFound())
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(lookup).doesNotContain("Beta Buyer").doesNotContain(customerOfB);
+        }
+
+        @Test
+        void shopIdInBodyIsIgnoredAndBsPhoneIsFreeForA() throws Exception {
+            String created = api.createOk(shopA.bearer(), "Alpha Same Phone", "01712345678");
+            String customerOfA = com.sellerdesk.customer.CustomerTestApi.id(created);
+            assertThat(customerDocument(customerOfA).get("shopId")).isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+
+            String sneaky = api.create(shopA.bearer(), """
+                            {"name":"Sneaky","phone":"01912345678","shopId":"%s"}""".formatted(shopB.shopId()))
+                    .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+            String sneakyId = com.sellerdesk.customer.CustomerTestApi.id(sneaky);
+            assertThat(customerDocument(sneakyId).get("shopId")).isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+            mockMvc.perform(get("/api/v1/customers/{id}", sneakyId).header("Authorization", shopB.bearer()))
+                    .andExpect(status().isNotFound());
+        }
+
+        private void assertNotFoundForA(MockHttpServletRequestBuilder request) throws Exception {
+            String responseBody = mockMvc.perform(request.header("Authorization", shopA.bearer()))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(responseBody).doesNotContain(shopB.shopId()).doesNotContain("Beta Buyer");
+        }
+
+        private org.bson.Document customerDocument(String id) {
+            return mongoTemplate.findById(new org.bson.types.ObjectId(id), org.bson.Document.class, "customers");
         }
     }
 

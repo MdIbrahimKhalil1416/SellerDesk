@@ -143,16 +143,32 @@ Errors: `400 VALIDATION_FAILED` (`fieldErrors`: `quantity`, `quantityChange`, `r
 
 ## 6. Customers
 
+Full design: `modules/CUSTOMER.md`. Phones in any accepted Bangladeshi format (`01…`, `+880…`,
+`880…`, `00880…`, separators, Bangla digits); always stored and returned as `01XXXXXXXXX`.
+
 | Method | Path | Auth | Request → Response |
 |--------|------|------|--------------------|
-| GET | `/customers` | `CUSTOMER_VIEW` | `?q=` (phone or name prefix) `&tag=` → page of `CustomerSummary {id, name, phone, district, stats, tags}` |
-| GET | `/customers/lookup` | `CUSTOMER_VIEW` or `ORDER_CREATE` | `?phone=` → `CustomerResponse` or `404`. Used on the order form: type a phone, auto-fill the customer. |
-| POST | `/customers` | `CUSTOMER_EDIT` | `{name, phone, altPhone?, facebookProfileUrl?, addresses?, note?, tags?}` → `201 CustomerResponse`. `409 PHONE_ALREADY_EXISTS`. |
-| GET | `/customers/{id}` | `CUSTOMER_VIEW` | → `CustomerResponse {id, name, phone, altPhone, facebookProfileUrl, addresses, note, tags, stats, createdAt}` |
-| PUT | `/customers/{id}` | `CUSTOMER_EDIT` | same body as create → `CustomerResponse` |
-| GET | `/customers/{id}/orders` | `CUSTOMER_VIEW` + `ORDER_VIEW` | → page of `OrderSummary` |
+| GET | `/customers` | `CUSTOMER_VIEW` | `?q=&tag=&status=ACTIVE\|ARCHIVED\|ALL&sort=createdAt,desc\|name,asc\|lastOrderAt,desc&page=&size=` → page of `CustomerSummary {id, name, phone, altPhone, defaultAddress{district, area, zone}, tags, status, stats, createdAt}`. `q`: digits (3+) match the start of the phone or alt phone, 4+ digits also the end ("…5678"); text matches the start of the name. |
+| GET | `/customers/tags` | `CUSTOMER_VIEW` | → `[{name, customerCount}]` (active customers) |
+| GET | `/customers/lookup` | `CUSTOMER_VIEW` or `ORDER_CREATE` | `?phone=` → `CustomerResponse` (also when archived) or `404 NOT_FOUND`. Exact match on the main phone only. Invalid phone → `400`. Used on the order form. |
+| POST | `/customers` | `CUSTOMER_EDIT` | `{name, phone, altPhone?, facebookProfileUrl?, note?, tags? (≤10, ≤30 chars), addresses? (≤5, AddressRequest)}` → `201 CustomerResponse`. `409 PHONE_ALREADY_EXISTS` (also for an archived customer's phone). |
+| GET | `/customers/{id}` | `CUSTOMER_VIEW` | → `CustomerResponse {id, name, phone, altPhone, facebookProfileUrl, addresses[{addressId, label, line, area, district, zone, note, isDefault}], note, tags, status, stats{totalOrders, deliveredOrders, returnedOrders, cancelledOrders, totalSpent, lastOrderAt}, version, createdAt, updatedAt}` |
+| PUT | `/customers/{id}` | `CUSTOMER_EDIT` | `{name, phone, altPhone?, facebookProfileUrl?, note?, tags?, version}` → `CustomerResponse`. Profile only; optional fields left out are cleared. `409 PHONE_ALREADY_EXISTS` / `CONCURRENT_MODIFICATION`. |
+| PATCH | `/customers/{id}/status` | `CUSTOMER_EDIT` | `{status: ACTIVE\|ARCHIVED, version}` → `CustomerResponse` (archive / restore) |
+| POST | `/customers/{id}/addresses` | `CUSTOMER_EDIT` | `AddressRequest {label?, line, area?, district, zone, note?, isDefault?}` → `201 CustomerResponse`. `409 ADDRESS_LIMIT_REACHED` (5). |
+| PUT | `/customers/{id}/addresses/{addressId}` | `CUSTOMER_EDIT` | `AddressRequest` → `CustomerResponse` |
+| DELETE | `/customers/{id}/addresses/{addressId}` | `CUSTOMER_EDIT` | → `CustomerResponse`; the oldest remaining address becomes default if needed |
+| GET | `/customers/{id}/orders` | `CUSTOMER_VIEW` + `ORDER_VIEW` | → page of `OrderSummary` (built with the Order module) |
 
-No delete in Phase 1 (orders reference customers).
+No delete in Phase 1 (orders reference customers): archive instead. `isDefault: true` moves the
+default mark; `false` keeps the current default. Address changes and order counters do not change
+`version`. `stats` is never accepted from the client; `totalSpent` is in poisha.
+
+Errors: `400 VALIDATION_FAILED` (`fieldErrors`: `name`, `phone`, `altPhone` (also when equal to
+`phone`), `facebookProfileUrl`, `tags[i]`, `addresses[i].line`/`district`/`zone`, `version`,
+query parameters), `403 FORBIDDEN`, `404 NOT_FOUND` (unknown, malformed or other shop's customer
+or address id), `409 PHONE_ALREADY_EXISTS` (`fieldErrors[phone]`), `409 ADDRESS_LIMIT_REACHED`,
+`409 CONCURRENT_MODIFICATION`.
 
 ---
 
