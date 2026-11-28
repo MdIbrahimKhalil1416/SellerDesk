@@ -78,7 +78,8 @@ script; the next `PUT /shop` stores the field. `logo` is optional, so a missing 
 **Logo files.** Same pipeline as product images (`docs/modules/PRODUCT.md` §4): orphan cleanup task
 before the upload, `$set` of the new logo + `REMOVED` task for the old file in one transaction.
 
-**Order numbers.** Per-shop sequence: `findAndModify({_id: shopId}, {$inc: {orderSeq: 1}}, returnNew)`.
+**Order numbers.** Per-shop sequence: `findAndModify({_id: shopId}, {$inc: {orderSeq: 1}}, returnNew)`
+(`ShopService.nextOrderNumber()`; it does not change the shop's `version` or `updatedAt`).
 Atomic, no extra `counters` collection. Done **outside** any transaction: if it were inside,
 two concurrent order creations would conflict on the shop document and one would have to retry.
 Trade-off: a failed order creation leaves a gap in numbers (#1041 then #1043). Acceptable.
@@ -340,70 +341,63 @@ the order status change, or they drift. A rebuild-from-orders admin task can rep
 
 ## 9. `orders` (items embedded as snapshots)
 
+Full design: `modules/ORDER.md` §2–§4 (built: `order.model.Order`). Summary:
+
 | Field | Type | Req | Notes |
 |-------|------|-----|-------|
 | `_id` | ObjectId | Y | |
 | `shopId` | ObjectId | Y | |
-| `orderNumber` | Int64 | Y | per-shop sequence |
-| `orderNumberPrefix` | String | Y | copy of `shops.settings.orderNumberPrefix` at creation; shown as `SD-1042`. A copy, so changing the shop's prefix never renames existing orders. |
-| `customerId` | ObjectId | Y | |
-| `customer.name` | String | Y | snapshot |
-| `customer.phone` | String | Y | snapshot |
-| `customer.address` | Address | Y | snapshot, delivery address |
-| `items` | Array\<OrderItem\> | Y | 1–50 items |
-| `subtotal` | Int64 | Y | Σ lineTotal |
-| `deliveryCharge` | Int64 | Y | ≥ 0 |
-| `discount` | Int64 | Y | ≥ 0, ≤ subtotal |
-| `total` | Int64 | Y | subtotal + deliveryCharge − discount |
-| `advancePaid` | Int64 | Y | ≥ 0 (bKash/Nagad advance), ≤ total |
-| `codAmount` | Int64 | Y | total − advancePaid; what the courier must collect |
-| `status` | String | Y | `PENDING`, `CONFIRMED`, `PACKED`, `SHIPPED`, `DELIVERED`, `RETURNED`, `CANCELLED` |
-| `statusHistory` | Array | Y | `{ from, to, at, by, note }` |
-| `source` | String | Y | `FACEBOOK_PAGE`, `MESSENGER`, `PHONE`, `OTHER` |
-| `note` | String | N | internal note |
-| `shipping.courierName` | String | N | free text (courier integration is Phase 2) |
-| `shipping.trackingId` | String | N | free text |
-| `cancelReason` | String | N | |
-| `returnReason` | String | N | |
-| `createdBy` | ObjectId | Y | |
+| `orderNumber` | Int64 | Y | per-shop sequence from `shops.orderSeq` (taken outside the transaction) |
+| `orderNumberPrefix` | String | Y | copy of `settings.orderNumberPrefix` at creation; shown as `SD-1042` |
+| `requestId` | String | N | client UUID from create (idempotency) |
+| `customerId` | ObjectId | Y | fixed after create |
+| `customer.name`, `customer.phone`, `customer.address` | | Y | snapshot; `address` is the delivery `Address` (§5) |
+| `items` | Array\<OrderItem\> | Y | 1–50, unique `variantId` |
+| `subtotal` | Int64 | Y | Σ `lineTotal` |
+| `discount` | Int64 | Y | `0`–`subtotal` |
+| `deliveryCharge` | Int64 | Y | `0`–`500000`; default from shop settings by zone |
+| `total` | Int64 | Y | `subtotal − discount + deliveryCharge` |
+| `advancePaid` | Int64 | Y | `0`–`total` |
+| `codAmount` | Int64 | Y | `total − advancePaid` |
+| `status` | String | Y | `PENDING`, `CONFIRMED`, `PACKED`, `SHIPPED`, `DELIVERED`, `CANCELLED`, `RETURNED` |
+| `statusHistory` | Array | Y | `{from, to, at, by, byName, note}` |
+| `edits` | Array | Y | `{at, by, byName, fields, summary}`, last 50 |
+| `source` | String | Y | `FACEBOOK`, `MESSENGER`, `WHATSAPP`, `PHONE`, `OTHER` |
+| `note` | String | N | internal note, ≤ 1000 |
+| `shipping.courierName`, `shipping.trackingId` | String | N | free text (courier integration is Phase 2) |
+| `cancelReason`, `returnReason` | String | N | |
+| `createdBy`, `createdByName` | | Y | |
 | `version`, `createdAt`, `updatedAt` | | Y | |
 
-**`OrderItem`** (snapshot, never re-read from product)
-
-| Field | Type | Req |
-|-------|------|-----|
-| `productId` | ObjectId | Y |
-| `variantId` | ObjectId | Y |
-| `sku` | String | Y |
-| `productName` | String | Y |
-| `variantName` | String | Y |
-| `unitPrice` | Int64 | Y |
-| `quantity` | Int32 | Y (1–999) |
-| `lineTotal` | Int64 | Y |
+**`OrderItem`** (snapshot, never re-read from the product): `productId`, `variantId`, `sku`,
+`productName`, `variantName`, `unitPrice` (Int64), `quantity` (Int32, 1–999), `lineTotal`
+(Int64), `returnedRestocked` (Boolean, set on return).
 
 **Indexes:**
 - `{ shopId: 1, orderNumber: 1 }` **unique**.
-- `{ shopId: 1, status: 1, createdAt: -1 }`: pipeline tabs ("all PACKED orders").
+- `{ shopId: 1, status: 1, createdAt: -1 }`: pipeline tabs, status + date filter.
 - `{ shopId: 1, createdAt: -1 }`: default list, date range.
 - `{ shopId: 1, customerId: 1, createdAt: -1 }`: customer order history.
-- `{ shopId: 1, "customer.phone": 1 }`: search orders by phone.
+- `{ shopId: 1, "customer.phone": 1, createdAt: -1 }`: search by phone.
+- `{ shopId: 1, requestId: 1 }` **unique**, partial (`requestId` exists): idempotent create.
+- `{ shopId: 1, "items.productId": 1 }`: "is this product used?".
 
 ### Status transitions and side effects
 
 | From → To | Stock effect | Customer stats | Editable after? |
 |-----------|--------------|----------------|-----------------|
-| (create) → PENDING | none | `totalOrders +1`, `lastOrderAt` | items, prices, address |
+| (create) → PENDING | none | `totalOrders +1`, `lastOrderAt` | everything except the customer |
 | PENDING → CONFIRMED | `RESERVE` each item | | address, note |
 | CONFIRMED → PACKED | none | | address, note |
 | PACKED → SHIPPED | `DEDUCT` each item | | note only |
 | SHIPPED → DELIVERED | none | `deliveredOrders +1`, `totalSpent += total` | none |
-| SHIPPED → RETURNED | `RETURN` if restock | `returnedOrders +1` | none |
+| SHIPPED → RETURNED | `RETURN` per restocked item | `returnedOrders +1` | none |
 | PENDING → CANCELLED | none | `cancelledOrders +1` | none |
 | CONFIRMED / PACKED → CANCELLED | `RELEASE` each item | `cancelledOrders +1` | none |
 
-Any other transition → `409 INVALID_STATUS_TRANSITION`.
-The status update itself is conditional: `{ _id, shopId, status: <expected from> }`. If it
-matches nothing, someone else already moved the order → `409`.
+Any other transition → `409 INVALID_STATUS_TRANSITION`; already in the target status → no-op.
+The status update is conditional on `{ _id, shopId, status: <from> }` and runs in one
+transaction with the stock and customer writes (`modules/ORDER.md` §6).
 
 ---
 

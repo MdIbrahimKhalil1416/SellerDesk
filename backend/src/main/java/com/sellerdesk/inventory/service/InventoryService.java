@@ -33,6 +33,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -218,6 +219,28 @@ public class InventoryService {
                 .map(p -> levels(stockOf(findVariant(p, variantId))))
                 .orElseGet(() -> afterLevels(earlier));
         return new StockChangeResponse(toResponse(earlier), now);
+    }
+
+    /**
+     * Current {@code available} of each variant (read only), for the order screen and the
+     * "not enough stock" report of a failed confirm. Malformed ids, unknown ids and ids of another
+     * shop are simply missing from the result.
+     */
+    public Map<String, Integer> availableFor(Collection<String> variantIds) {
+        String shopId = currentUser.shopId();
+        List<String> valid = variantIds.stream().filter(id -> id != null && ObjectId.isValid(id)).distinct().toList();
+        Map<String, Integer> result = new LinkedHashMap<>();
+        if (valid.isEmpty()) {
+            return result;
+        }
+        for (Product product : stockRepository.findStockOfVariants(shopId, valid)) {
+            for (Variant v : product.getVariants()) {
+                if (valid.contains(v.getVariantId())) {
+                    result.put(v.getVariantId(), stockOf(v).available());
+                }
+            }
+        }
+        return result;
     }
 
     // ==== Order operations (Java API for the Order module) ================================

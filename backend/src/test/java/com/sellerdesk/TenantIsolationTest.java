@@ -26,6 +26,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Base64;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -344,7 +345,7 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
      * }
      * }</pre>
      *
-     * Modules still to add: Orders. Done: {@link Products}, {@link Staff}, {@link Inventory}, {@link Customers}.
+     * Done: {@link Products}, {@link Staff}, {@link Inventory}, {@link Customers}, {@link Orders}.
      */
     @Nested
     class CrossTenantById {
@@ -887,6 +888,122 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
 
         private org.bson.Document customerDocument(String id) {
             return mongoTemplate.findById(new org.bson.types.ObjectId(id), org.bson.Document.class, "customers");
+        }
+    }
+
+    // ==== 11. Orders ====================================================================
+
+    /**
+     * Orders (docs/modules/ORDER.md §11). Every order endpoint takes an order id; a status change
+     * on another shop's order would also move that shop's stock and customer counters, so those
+     * are checked unchanged too. Referenced ids (customer, variant) of another shop are 404.
+     */
+    @Nested
+    class Orders {
+
+        private com.sellerdesk.order.OrderTestApi api;
+        private ProductTestApi products;
+        private String variantOfB;
+        private String orderOfB;
+        private String customerOfB;
+
+        @BeforeEach
+        void shopBHasAnOrder() throws Exception {
+            api = new com.sellerdesk.order.OrderTestApi(mockMvc);
+            products = new ProductTestApi(mockMvc);
+            variantOfB = ProductTestApi.variantId(products.createOk(shopB.bearer(), "Beta Kurta", "B-KURTA-1"), 0);
+            new com.sellerdesk.inventory.InventoryTestApi(mockMvc).restockOk(shopB.bearer(), variantOfB, 5);
+            orderOfB = api.createOrder(shopB.bearer(), variantOfB, 1);
+            customerOfB = document("orders", orderOfB).get("customerId").toString();
+        }
+
+        @Test
+        void otherShopsOrderIsNotFoundOnEveryIdEndpointAndNothingMoves() throws Exception {
+            // B's order is CONFIRMED so that every action would have a side effect if it got through.
+            api.actionOk(shopB.bearer(), orderOfB, "confirm");
+            org.bson.Document orderBefore = document("orders", orderOfB);
+            org.bson.Document productBefore = productOf(variantOfB);
+            org.bson.Document customerBefore = document("customers", customerOfB);
+            long movementsBefore = mongoTemplate.count(new org.springframework.data.mongodb.core.query.Query(), "stock_movements");
+
+            assertHiddenFromOtherShop("/api/v1/orders/" + orderOfB);
+            assertNotFoundForA(com.sellerdesk.order.OrderTestApi.updateRequest(orderOfB, 1,
+                    List.of(com.sellerdesk.order.OrderTestApi.line(variantOfB, 1)), ""));
+            for (String action : List.of("confirm", "pack", "ship", "deliver", "return", "cancel")) {
+                assertNotFoundForA(com.sellerdesk.order.OrderTestApi.actionRequest(orderOfB, action));
+            }
+
+            assertThat(document("orders", orderOfB)).isEqualTo(orderBefore);
+            assertThat(productOf(variantOfB)).isEqualTo(productBefore);
+            assertThat(document("customers", customerOfB)).isEqualTo(customerBefore);
+            assertThat(mongoTemplate.count(new org.springframework.data.mongodb.core.query.Query(), "stock_movements"))
+                    .isEqualTo(movementsBefore);
+        }
+
+        @Test
+        void customerAndVariantIdsOfShopBAreNotFoundAndTakeNoOrderNumber() throws Exception {
+            String variantOfA = ProductTestApi.variantId(products.createOk(shopA.bearer(), "Alpha Kurta", "A-KURTA-1"), 0);
+
+            assertNotFoundForA(post("/api/v1/orders").contentType(MediaType.APPLICATION_JSON)
+                    .content(com.sellerdesk.order.OrderTestApi.orderJson(com.sellerdesk.order.OrderTestApi.line(variantOfB, 1))));
+            assertNotFoundForA(post("/api/v1/orders").contentType(MediaType.APPLICATION_JSON).content("""
+                    {"requestId":"%s","customerId":"%s","items":[%s],"source":"PHONE"}"""
+                    .formatted(java.util.UUID.randomUUID(), customerOfB, com.sellerdesk.order.OrderTestApi.line(variantOfA, 1))));
+            assertThat(document("shops", shopA.shopId()).get("orderSeq", Number.class).longValue()).isZero();
+            assertThat(mongoTemplate.count(new org.springframework.data.mongodb.core.query.Query(
+                    org.springframework.data.mongodb.core.query.Criteria.where("shopId")
+                            .is(new org.bson.types.ObjectId(shopA.shopId()))), "orders")).isZero();
+
+            // A PENDING edit of A's own order may not add B's variant either.
+            String orderOfA = api.createOrder(shopA.bearer(), variantOfA, 1);
+            assertNotFoundForA(com.sellerdesk.order.OrderTestApi.updateRequest(orderOfA, 0, List.of(
+                    com.sellerdesk.order.OrderTestApi.line(variantOfA, 1), com.sellerdesk.order.OrderTestApi.line(variantOfB, 1)), ""));
+            assertThat(document("orders", orderOfA).getList("items", org.bson.Document.class)).hasSize(1);
+        }
+
+        @Test
+        void shopIdInBodyIsIgnoredAndNumbersAndRequestIdsArePerShop() throws Exception {
+            String variantOfA = ProductTestApi.variantId(products.createOk(shopA.bearer(), "Alpha Kurta", "A-KURTA-1"), 0);
+            String requestIdOfB = document("orders", orderOfB).getString("requestId");
+
+            // Same requestId as B's order: no clash, A gets its own order #1.
+            String json = com.sellerdesk.order.OrderTestApi.orderJson(requestIdOfB, "01712345678", "INSIDE_DHAKA",
+                    List.of(com.sellerdesk.order.OrderTestApi.line(variantOfA, 1)), ",\"shopId\":\"" + shopB.shopId() + "\"");
+            String created = api.create(shopA.bearer(), json)
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.orderNumber").value("SD-1"))
+                    .andReturn().getResponse().getContentAsString();
+            String orderOfA = com.sellerdesk.order.OrderTestApi.id(created);
+            assertThat(orderOfA).isNotEqualTo(orderOfB);
+            assertThat(document("orders", orderOfA).get("shopId")).isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+            // A's customer with the same phone is A's own record, not B's.
+            assertThat(document("orders", orderOfA).get("customerId").toString()).isNotEqualTo(customerOfB);
+            mockMvc.perform(get("/api/v1/orders/{id}", orderOfA).header("Authorization", shopB.bearer()))
+                    .andExpect(status().isNotFound());
+
+            mockMvc.perform(com.sellerdesk.order.OrderTestApi.updateRequest(orderOfA, 0,
+                            List.of(com.sellerdesk.order.OrderTestApi.line(variantOfA, 2)), ",\"shopId\":\"" + shopB.shopId() + "\"")
+                            .header("Authorization", shopA.bearer()))
+                    .andExpect(status().isOk());
+            assertThat(document("orders", orderOfA).get("shopId")).isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+        }
+
+        private void assertNotFoundForA(MockHttpServletRequestBuilder request) throws Exception {
+            String responseBody = mockMvc.perform(request.header("Authorization", shopA.bearer()))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(responseBody).doesNotContain(shopB.shopId()).doesNotContain("Beta Kurta").doesNotContain("B-KURTA-1");
+        }
+
+        private org.bson.Document document(String collection, String id) {
+            return mongoTemplate.findById(new org.bson.types.ObjectId(id), org.bson.Document.class, collection);
+        }
+
+        private org.bson.Document productOf(String variantId) {
+            return mongoTemplate.findOne(new org.springframework.data.mongodb.core.query.Query(
+                    org.springframework.data.mongodb.core.query.Criteria.where("variants.variantId")
+                            .is(new org.bson.types.ObjectId(variantId))), org.bson.Document.class, "products");
         }
     }
 

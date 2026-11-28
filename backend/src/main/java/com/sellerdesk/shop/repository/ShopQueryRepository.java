@@ -43,6 +43,19 @@ public class ShopQueryRepository {
         return findAndModify(shopId, update, now, false);
     }
 
+    /**
+     * Takes the next order number: {@code $inc orderSeq} in one atomic step and returns the shop
+     * <b>after</b> it (new {@code orderSeq} + current settings). Two parallel calls always get two
+     * different numbers. Does not bump {@code version} or {@code updatedAt}: taking a number is not
+     * a settings change. Empty if the shop does not exist.
+     */
+    public Optional<Shop> incrementOrderSeq(String shopId) {
+        Query query = new Query(Criteria.where("_id").is(shopId));
+        query.fields().include("orderSeq").include("settings");
+        return Optional.ofNullable(mongoTemplate.findAndModify(query, new Update().inc("orderSeq", 1),
+                FindAndModifyOptions.options().returnNew(true), Shop.class));
+    }
+
     private Optional<Shop> findAndModify(String shopId, Update update, Instant now, boolean returnNew) {
         // Find-and-modify is one atomic step on the server: no other write can slip in between.
         update.set("updatedAt", now).inc("version", 1);

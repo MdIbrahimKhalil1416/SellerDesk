@@ -28,6 +28,7 @@ import com.sellerdesk.product.repository.ProductSort;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -119,6 +120,41 @@ public class ProductService {
         return queryRepository.categories(currentUser.shopId()).stream()
                 .map(c -> new CategoryResponse(c.name(), c.productCount()))
                 .toList();
+    }
+
+    /**
+     * The variants an order wants to sell, with what the order snapshots (docs/modules/ORDER.md §10).
+     * Product name, SKU, variant name and price as they are <b>now</b>; whether the variant can be
+     * sold is for the Order module to decide ({@link OrderableVariant#orderable()}).
+     *
+     * @return one entry per requested id, keyed by variant id
+     * @throws com.sellerdesk.common.error.ResourceNotFoundException (404) if any id is malformed,
+     *         unknown or belongs to another shop
+     */
+    public Map<String, OrderableVariant> resolveForOrder(Collection<String> variantIds) {
+        String shopId = currentUser.shopId();
+        for (String id : variantIds) {
+            if (id == null || !ObjectId.isValid(id)) {
+                throw ProductErrors.variantNotFound();
+            }
+        }
+        Map<String, OrderableVariant> found = new HashMap<>();
+        if (variantIds.isEmpty()) {
+            return found;
+        }
+        Set<String> wanted = Set.copyOf(variantIds);
+        for (Product product : queryRepository.findByVariantIds(shopId, wanted)) {
+            for (Variant v : product.getVariants()) {
+                if (wanted.contains(v.getVariantId())) {
+                    found.put(v.getVariantId(), new OrderableVariant(product.getId(), product.getName(),
+                            product.getStatus(), v.getVariantId(), v.getSku(), v.getName(), v.getPrice(), v.isActive()));
+                }
+            }
+        }
+        if (found.size() != wanted.size()) {
+            throw ProductErrors.variantNotFound();
+        }
+        return found;
     }
 
     // ==== Create =========================================================================

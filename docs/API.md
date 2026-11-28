@@ -174,45 +174,75 @@ or address id), `409 PHONE_ALREADY_EXISTS` (`fieldErrors[phone]`), `409 ADDRESS_
 
 ## 7. Orders
 
+Full design: `modules/ORDER.md`. Money in poisha; the server computes every total.
+
+**Built:** `POST /orders`, `GET /orders/{id}`, `PUT /orders/{id}`, and the six status actions
+(`confirm`, `pack`, `ship`, `deliver`, `return`, `cancel`). **Not built yet:** `GET /orders`
+(list), `PATCH /orders/{id}/details`, `POST /orders/bulk-status`, `GET /orders/{id}/timeline`,
+`GET /customers/{id}/orders`.
+
+The body of `confirm`, `pack`, `ship` and `deliver` is optional (`note` ≤ 500). `cancel` and
+`return` need a `reason` (1–500).
+
 | Method | Path | Auth | Request → Response |
 |--------|------|------|--------------------|
-| GET | `/orders` | `ORDER_VIEW` | `?status=&from=&to=&q=` (order number or phone) `&source=` → page of `OrderSummary {id, orderNumber, status, customerName, customerPhone, district, itemCount, total, codAmount, createdAt}` |
-| POST | `/orders` | `ORDER_CREATE` | see below → `201 OrderResponse` (status `PENDING`) |
-| GET | `/orders/{id}` | `ORDER_VIEW` | → `OrderResponse` (full: customer snapshot, items, money fields, shipping, statusHistory, createdBy) |
-| PUT | `/orders/{id}` | `ORDER_EDIT` | Same shape as create. PENDING: everything editable. CONFIRMED/PACKED: only `address`, `note`. SHIPPED: only `note`. Else `409 ORDER_NOT_EDITABLE`. Uses `version` → `409 CONCURRENT_MODIFICATION`. |
-| POST | `/orders/{id}/confirm` | `ORDER_CONFIRM` | `{note?}` → `OrderResponse`. Reserves stock in one transaction. `409 INSUFFICIENT_STOCK` (lists SKUs) or `INVALID_STATUS_TRANSITION`. |
+| POST | `/orders` | `ORDER_CREATE` | `CreateOrderRequest` (below) → `201 OrderResponse` (`PENDING`). Same `requestId` again → `200` with the existing order; with a different body → `409 REQUEST_ID_REUSED`. |
+| GET | `/orders` | `ORDER_VIEW` | `?status=` (repeatable) `&source=&from=&to=` (Asia/Dhaka dates, inclusive) `&q=` (order number `SD-1042` / `1042`, or full phone) `&sort=createdAt,desc\|createdAt,asc&page=&size=` → page of `OrderSummary {id, orderNumber, status, source, customerName, customerPhone, district, zone, itemCount, total, codAmount, createdAt}` |
+| GET | `/orders/{id}` | `ORDER_VIEW` | → `OrderResponse` (customer snapshot, items, money fields, shipping, reasons, statusHistory, `allowedActions`, createdBy, version) |
+| PUT | `/orders/{id}` | `ORDER_EDIT` | `{customerName?, deliveryAddress, items, deliveryCharge?, discount?, advancePaid?, source, note?, version}` → `OrderResponse`. **`PENDING` only**, full replace; the customer cannot change. Else `409 ORDER_NOT_EDITABLE`; stale `version` → `409 CONCURRENT_MODIFICATION`. |
+| PATCH | `/orders/{id}/details` | `ORDER_EDIT` | `{deliveryAddress?, note?, version}` → `OrderResponse`. `PENDING` / `CONFIRMED` / `PACKED`: address and note; `SHIPPED`: note only. Money does not change. |
+| POST | `/orders/{id}/confirm` | `ORDER_CONFIRM` | `{note?}` → `OrderResponse`. Reserves stock in one transaction: all items or none. `409 INSUFFICIENT_STOCK` with one `fieldErrors` entry per short item (`items[i].quantity`, `"SKU: requested 3, available 1"`). |
 | POST | `/orders/{id}/pack` | `ORDER_FULFILL` | `{note?}` → `OrderResponse` |
 | POST | `/orders/{id}/ship` | `ORDER_FULFILL` | `{courierName?, trackingId?, note?}` → `OrderResponse`. Stock `DEDUCT`. |
 | POST | `/orders/{id}/deliver` | `ORDER_CLOSE` | `{note?}` → `OrderResponse`. Updates customer stats. |
-| POST | `/orders/{id}/return` | `ORDER_CLOSE` | `{reason, items?: [{variantId, restock}]}` → `OrderResponse`. Per item: `restock` defaults to `true` (items left out are restocked); only restocked items get a `RETURN` movement (`modules/INVENTORY.md` §1). |
-| POST | `/orders/{id}/cancel` | `ORDER_CANCEL` | `{reason}` → `OrderResponse`. Allowed from PENDING, CONFIRMED, PACKED. Releases reserved stock. |
+| POST | `/orders/{id}/return` | `ORDER_CLOSE` | `{reason, items?: [{variantId, restock}]}` → `OrderResponse`. From `SHIPPED` only. Items left out are restocked; only restocked items get a `RETURN` movement. |
+| POST | `/orders/{id}/cancel` | `ORDER_CANCEL` | `{reason}` → `OrderResponse`. From `PENDING`, `CONFIRMED`, `PACKED`; releases reserved stock. |
+| POST | `/orders/bulk-status` | permission of `action` | `{action: CONFIRM\|PACK\|SHIP\|DELIVER\|CANCEL, orderIds (1–50), note?, reason? (CANCEL), courierName?}` → `200 {action, succeeded, failed, results[{orderId, orderNumber?, ok, status?, errorCode?, message?}]}`. One transaction per order; failures do not stop the others. |
+| GET | `/orders/{id}/timeline` | `ORDER_VIEW` | → `[{type: STATUS\|EDIT, at, by{id, name}, from?, to?, note?, fields?, summary?}]`, oldest first |
+
+Transitions not in the status table (`SCHEMA.md` §9) → `409 INVALID_STATUS_TRANSITION`. A
+transition to the status the order already has → `200`, nothing changes.
+
+`OrderResponse`: `{id, orderNumber, status, source, customer{id, name, phone, address}, items[{productId,
+variantId, sku, productName, variantName, unitPrice, quantity, lineTotal, returnedRestocked, available*}],
+subtotal, discount, deliveryCharge, total, advancePaid, codAmount, note, shipping{courierName, trackingId},
+cancelReason, returnReason, statusHistory[{from, to, at, by{id, name}, note}], allowedActions, createdBy{id,
+name}, version, createdAt, updatedAt}`. `*` `available` (live stock) only with `STOCK_VIEW` and only while
+`PENDING`. `allowedActions` lists the actions possible from the current status for which the user has the
+permission.
 
 ### Create order request
 
 ```json
 {
+  "requestId": "3f0c...-uuid",           // required, one per form
   "customerId": "6745...",               // either customerId ...
   "customer": {                          // ... or customer (find-or-create by phone)
     "name": "Rahim", "phone": "01712345678",
     "address": { "line": "House 5, Road 3", "area": "Mirpur", "district": "Dhaka", "zone": "INSIDE_DHAKA" }
   },
-  "deliveryAddress": { ... },            // optional; default = customer's first address
+  "deliveryAddress": { ... },            // optional; default = inline address, else customer's default address
   "items": [
     { "variantId": "6746...", "quantity": 2, "unitPrice": 45000 }   // unitPrice optional, default = variant price
   ],
   "deliveryCharge": 6000,                // optional; default from shop settings by zone
   "discount": 0,
   "advancePaid": 0,
-  "source": "MESSENGER",
+  "source": "MESSENGER",                 // FACEBOOK | MESSENGER | WHATSAPP | PHONE | OTHER
   "note": "Call before delivery"
 }
 ```
 
 Server computes `subtotal`, `total`, `codAmount`, item snapshots and `orderNumber`.
 The client never sends totals. Inline customer creation is allowed with `ORDER_CREATE`
-alone, so moderators can take orders fast. Stock is **not** checked at create: it is
-reserved at confirm. The response shows current `available` per item so the moderator sees
-shortages early.
+alone. Archived products and inactive variants → `409 VARIANT_NOT_ORDERABLE`. Stock is
+**not** checked at create: it is reserved at confirm. The response shows current `available`
+per item (with `STOCK_VIEW`) so the moderator sees shortages early.
+
+Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `403 FORBIDDEN`, `404 NOT_FOUND`
+(unknown or other shop's order, customer or variant), `409 VARIANT_NOT_ORDERABLE`,
+`INVALID_STATUS_TRANSITION`, `ORDER_NOT_EDITABLE`, `INSUFFICIENT_STOCK`,
+`CONCURRENT_MODIFICATION`, `REQUEST_ID_REUSED`.
 
 ---
 

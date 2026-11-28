@@ -204,7 +204,7 @@ form gets `409 CONCURRENT_MODIFICATION` instead of overwriting someone else's ch
   used, or any variant has `onHand > 0` or `reserved > 0` (safety check).
 - **`ProductUsageChecker`** — interface in `product.service`:
   `boolean isUsed(String shopId, String productId)`. `inventory` (any stock movement) and
-  `order` (any order item) implement it (Inventory: `InventoryUsageChecker`, built; Order: when built); `ProductService` injects
+  `order` (any order item) implement it (Inventory: `InventoryUsageChecker`; Order: `OrderUsageChecker`; both built); `ProductService` injects
   `List<ProductUsageChecker>` (empty until then). This is *dependency inversion*: product
   defines the question, the other modules answer it, so the dependency still points
   `order / inventory → product` (`ARCHITECTURE.md` §1).

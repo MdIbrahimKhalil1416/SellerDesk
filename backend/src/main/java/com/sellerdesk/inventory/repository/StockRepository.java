@@ -4,6 +4,7 @@ import com.sellerdesk.common.security.TenantCriteria;
 import com.sellerdesk.product.model.Product;
 import com.sellerdesk.product.model.ProductStatus;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,14 @@ public class StockRepository {
     public Optional<Product> findByVariant(String shopId, String variantId) {
         Query query = new Query(TenantCriteria.of(shopId).and(VARIANT_ID).is(new ObjectId(variantId)));
         return Optional.ofNullable(mongoTemplate.findOne(query, Product.class));
+    }
+
+    /** The products of the shop holding any of the variants, with only variant ids and stock. */
+    public List<Product> findStockOfVariants(String shopId, Collection<String> variantIds) {
+        List<ObjectId> ids = variantIds.stream().map(ObjectId::new).toList();
+        Query query = new Query(TenantCriteria.of(shopId).and(VARIANT_ID).in(ids));
+        query.fields().include("variants.variantId", "variants.stock");
+        return mongoTemplate.find(query, Product.class);
     }
 
     /**

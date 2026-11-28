@@ -101,6 +101,25 @@ public class ShopService {
         return ShopResponse.from(updated);
     }
 
+    /** An order number: {@code number} from the shop's sequence, shown as {@code prefix-number}. */
+    public record OrderNumber(String prefix, long number) {
+    }
+
+    /**
+     * The next order number of the logged-in user's shop (docs/modules/ORDER.md §3): an atomic
+     * {@code $inc} of {@code orderSeq}, plus the current prefix, in one round trip.
+     *
+     * <p>Must be called <b>outside</b> any transaction: inside one, every parallel order create
+     * would write the same shop document and all but one would fail with a write conflict. The
+     * price: an order create that fails after this call leaves a gap in the numbers.
+     */
+    public OrderNumber nextOrderNumber() {
+        String shopId = currentUser.shopId();
+        Shop shop = shopQueryRepository.incrementOrderSeq(shopId).orElseThrow(ShopService::shopNotFound);
+        ShopSettings settings = shop.getSettings() == null ? ShopSettings.defaults() : shop.getSettings();
+        return new OrderNumber(settings.orderNumberPrefix(), shop.getOrderSeq());
+    }
+
     static ResourceNotFoundException shopNotFound() {
         return ResourceNotFoundException.of("Shop");
     }

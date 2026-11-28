@@ -107,6 +107,18 @@ public class ProductQueryRepository {
     }
 
     /**
+     * The products of this shop that hold any of the given variants (for orders). Uses the
+     * {@code shopId_variantId} index. Ids must be valid ObjectIds (checked by the caller).
+     */
+    public List<Product> findByVariantIds(String shopId, Collection<String> variantIds) {
+        List<org.bson.types.ObjectId> ids = variantIds.stream().map(org.bson.types.ObjectId::new).toList();
+        Query query = new Query(TenantCriteria.of(shopId).and("variants.variantId").in(ids));
+        query.fields().include("name", "status", "variants.variantId", "variants.sku", "variants.name",
+                "variants.price", "variants.active");
+        return mongoTemplate.find(query, Product.class);
+    }
+
+    /**
      * Active products for the order-form lookup, with only the fields it needs. Inactive variants
      * and products without active variants are filtered out by the service.
      */
