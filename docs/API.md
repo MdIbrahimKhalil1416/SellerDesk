@@ -176,9 +176,9 @@ or address id), `409 PHONE_ALREADY_EXISTS` (`fieldErrors[phone]`), `409 ADDRESS_
 
 Full design: `modules/ORDER.md`. Money in poisha; the server computes every total.
 
-**Built:** `POST /orders`, `GET /orders/{id}`, `PUT /orders/{id}`, and the six status actions
-(`confirm`, `pack`, `ship`, `deliver`, `return`, `cancel`). **Not built yet:** `GET /orders`
-(list), `PATCH /orders/{id}/details`, `POST /orders/bulk-status`, `GET /orders/{id}/timeline`,
+**Built:** `POST /orders`, `GET /orders` (list), `GET /orders/{id}`, `PUT /orders/{id}`, the six
+status actions (`confirm`, `pack`, `ship`, `deliver`, `return`, `cancel`), `POST /orders/bulk-status`
+and `GET /orders/{id}/timeline`. **Not built yet:** `PATCH /orders/{id}/details`,
 `GET /customers/{id}/orders`.
 
 The body of `confirm`, `pack`, `ship` and `deliver` is optional (`note` ≤ 500). `cancel` and
@@ -187,7 +187,7 @@ The body of `confirm`, `pack`, `ship` and `deliver` is optional (`note` ≤ 500)
 | Method | Path | Auth | Request → Response |
 |--------|------|------|--------------------|
 | POST | `/orders` | `ORDER_CREATE` | `CreateOrderRequest` (below) → `201 OrderResponse` (`PENDING`). Same `requestId` again → `200` with the existing order; with a different body → `409 REQUEST_ID_REUSED`. |
-| GET | `/orders` | `ORDER_VIEW` | `?status=` (repeatable) `&source=&from=&to=` (Asia/Dhaka dates, inclusive) `&q=` (order number `SD-1042` / `1042`, or full phone) `&sort=createdAt,desc\|createdAt,asc&page=&size=` → page of `OrderSummary {id, orderNumber, status, source, customerName, customerPhone, district, zone, itemCount, total, codAmount, createdAt}` |
+| GET | `/orders` | `ORDER_VIEW` | `?status=` (repeatable) `&source=&from=&to=` (Asia/Dhaka dates, inclusive) `&q=` (order number `SD-1042` / `1042`, or full phone) `&sort=createdAt,desc\|createdAt,asc&page=&size=` → page of `OrderSummary {id, orderNumber, status, source, customerId, customerName, customerPhone, district, zone, itemCount (units), total, codAmount, createdAt}`. Sorted by `createdAt` then `_id` (stable paging). Unknown `status`/`source`/`sort`, a bad date, `from` after `to`, or a `q` that is neither an order number nor a phone → `400 VALIDATION_FAILED`. |
 | GET | `/orders/{id}` | `ORDER_VIEW` | → `OrderResponse` (customer snapshot, items, money fields, shipping, reasons, statusHistory, `allowedActions`, createdBy, version) |
 | PUT | `/orders/{id}` | `ORDER_EDIT` | `{customerName?, deliveryAddress, items, deliveryCharge?, discount?, advancePaid?, source, note?, version}` → `OrderResponse`. **`PENDING` only**, full replace; the customer cannot change. Else `409 ORDER_NOT_EDITABLE`; stale `version` → `409 CONCURRENT_MODIFICATION`. |
 | PATCH | `/orders/{id}/details` | `ORDER_EDIT` | `{deliveryAddress?, note?, version}` → `OrderResponse`. `PENDING` / `CONFIRMED` / `PACKED`: address and note; `SHIPPED`: note only. Money does not change. |
@@ -197,7 +197,7 @@ The body of `confirm`, `pack`, `ship` and `deliver` is optional (`note` ≤ 500)
 | POST | `/orders/{id}/deliver` | `ORDER_CLOSE` | `{note?}` → `OrderResponse`. Updates customer stats. |
 | POST | `/orders/{id}/return` | `ORDER_CLOSE` | `{reason, items?: [{variantId, restock}]}` → `OrderResponse`. From `SHIPPED` only. Items left out are restocked; only restocked items get a `RETURN` movement. |
 | POST | `/orders/{id}/cancel` | `ORDER_CANCEL` | `{reason}` → `OrderResponse`. From `PENDING`, `CONFIRMED`, `PACKED`; releases reserved stock. |
-| POST | `/orders/bulk-status` | permission of `action` | `{action: CONFIRM\|PACK\|SHIP\|DELIVER\|CANCEL, orderIds (1–50), note?, reason? (CANCEL), courierName?}` → `200 {action, succeeded, failed, results[{orderId, orderNumber?, ok, status?, errorCode?, message?}]}`. One transaction per order; failures do not stop the others. |
+| POST | `/orders/bulk-status` | permission of `action` | `{action: CONFIRM\|PACK\|SHIP\|DELIVER\|CANCEL, orderIds (1–50), note?, reason? (CANCEL), courierName?}` → `200 {action, succeeded, failed, results[{orderId, orderNumber?, ok, status?, errorCode?, message?}]}`. One transaction per order, one after the other; failures do not stop the others. Already in the target status → `ok: true`. Unknown id or another shop's order → `errorCode: NOT_FOUND`. Missing the action's permission → `403` for the whole request. Duplicate ids, `RETURN`, or `CANCEL` without `reason` → `400`. |
 | GET | `/orders/{id}/timeline` | `ORDER_VIEW` | → `[{type: STATUS\|EDIT, at, by{id, name}, from?, to?, note?, fields?, summary?}]`, oldest first |
 
 Transitions not in the status table (`SCHEMA.md` §9) → `409 INVALID_STATUS_TRANSITION`. A

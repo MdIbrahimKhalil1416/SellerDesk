@@ -5,9 +5,9 @@ the order moves through the pipeline `PENDING → CONFIRMED → PACKED → SHIPP
 (or `CANCELLED` / `RETURNED`), and every step moves stock and customer counters together with
 the order in one transaction.
 
-Status: **backend core built**: create, get, `PENDING` edit, the six status actions with history,
-stock and customer counters. Not built yet: list (`GET /orders`), `PATCH .../details`, bulk status,
-timeline, `GET /customers/{id}/orders`, frontend. Backend package `com.sellerdesk.order`, frontend
+Status: **backend built** except `PATCH .../details` and `GET /customers/{id}/orders`: create,
+get, list, `PENDING` edit, the six status actions with history, bulk status change, timeline, stock
+and customer counters. Frontend not built yet. Backend package `com.sellerdesk.order`, frontend
 `features/orders`.
 
 Related: `SCHEMA.md` §9 (`orders`), §11 (transactions); `API.md` §7; `SECURITY.md` §3
@@ -99,15 +99,20 @@ overflow check is needed beyond the field limits.
 **Indexes** (all start with `shopId`, `SCHEMA.md` §10):
 
 1. `{shopId: 1, orderNumber: 1}` **unique**: number per shop; search by number.
-2. `{shopId: 1, status: 1, createdAt: -1}`: pipeline tabs ("all PACKED orders"), status + date filter.
-3. `{shopId: 1, createdAt: -1}`: default list, date range.
-4. `{shopId: 1, customerId: 1, createdAt: -1}`: `GET /customers/{id}/orders`.
-5. `{shopId: 1, "customer.phone": 1, createdAt: -1}`: search by phone.
-6. `{shopId: 1, requestId: 1}` **unique**, partial (`requestId` exists): idempotent create.
-7. `{shopId: 1, "items.productId": 1}`: `OrderUsageChecker` ("is this product used?").
+2. `{shopId: 1, status: 1, createdAt: -1, _id: -1}`: pipeline tabs ("all PACKED orders"), one or
+   more statuses (`$in`: MongoDB merges the sorted ranges, no in-memory sort), status + date.
+3. `{shopId: 1, createdAt: -1, _id: -1}`: default list, date range.
+4. `{shopId: 1, source: 1, createdAt: -1, _id: -1}`: source filter.
+5. `{shopId: 1, "customer.phone": 1, createdAt: -1, _id: -1}`: search by phone.
+6. `{shopId: 1, customerId: 1, createdAt: -1}`: `GET /customers/{id}/orders`.
+7. `{shopId: 1, requestId: 1}` **unique**, partial (`requestId` exists): idempotent create.
+8. `{shopId: 1, "items.productId": 1}`: `OrderUsageChecker` ("is this product used?").
 
-A `source` filter is applied on top of index 2 or 3; one shop's orders in a date range are a
-small set.
+The list sorts by `createdAt` then `_id`, so rows with the same time still page in a fixed
+order. Indexes 2–5 end with these two fields, so the sort comes from the index. Combined
+filters (status + source) use one of them and filter the rest. `OrderListIntegrationTest`
+runs `explain` on every filter combination: always an index starting with `shopId`, never a
+collection scan, never an in-memory sort.
 
 ---
 
@@ -357,8 +362,8 @@ OrderResponse {id, orderNumber ("SD-1042"), status, source,
                statusHistory[{from, to, at, by{id, name}, note}],
                allowedActions [CONFIRM, CANCEL, ...],     // for the current user's permissions
                createdBy{id, name}, version, createdAt, updatedAt}
-OrderSummary  {id, orderNumber, status, source, customerName, customerPhone, district, zone,
-               itemCount, total, codAmount, createdAt}
+OrderSummary  {id, orderNumber, status, source, customerId, customerName, customerPhone, district,
+               zone, itemCount (units: sum of quantities), total, codAmount, createdAt}
 BulkStatusResponse {action, succeeded, failed,
                     results[{orderId, orderNumber?, ok, status?, errorCode?, message?}]}
 TimelineEntry {type: STATUS | EDIT, at, by{id, name}, from?, to?, note?, fields?, summary?}
@@ -381,7 +386,7 @@ only buttons that would work; the backend still checks everything.
   - a valid Bangladeshi mobile in any accepted format → `BdPhone.normalize` → exact
     `customer.phone` (index #5).
   - anything else → `400 VALIDATION_FAILED` on `q` (name search is not supported in Phase 1).
-- `page` 0-based, `size` default 20, max 100. Default sort `createdAt,desc`.
+- `page` 0-based, `size` default 20, max 100. Default sort `createdAt,desc` (`_id` breaks ties).
 
 ### Bulk status change
 
@@ -394,8 +399,12 @@ only buttons that would work; the backend still checks everything.
   transaction**, one after the other (not in parallel: keeps load predictable and the order of
   stock reservation stable).
 - Per-order failures do not fail the request: `{orderId, ok: false, errorCode:
-  INVALID_STATUS_TRANSITION | INSUFFICIENT_STOCK | NOT_FOUND}`. Another shop's id is reported as
-  `NOT_FOUND`, exactly like an unknown id.
+  INVALID_STATUS_TRANSITION | INSUFFICIENT_STOCK | NOT_FOUND | CONCURRENT_MODIFICATION}`. Another
+  shop's id (or a malformed one) is reported as `NOT_FOUND`, exactly like an unknown id. An order
+  already in the target status is `ok: true` (nothing to do).
+- A short order in a bulk `CONFIRM` rolls back only its own transaction; its `message` names the
+  short SKU (or the number of short items). The per-item `fieldErrors` list is only in the
+  single `confirm` response.
 - Max 50 ids, no duplicates → else `400`.
 
 ### Timeline

@@ -19,7 +19,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: <HomeIcon /> },
-  { label: 'Orders', icon: <OrdersIcon /> },
+  { label: 'Orders', to: '/orders', icon: <OrdersIcon />, permission: 'ORDER_VIEW' },
   { label: 'Products', to: '/products', icon: <BoxIcon />, permission: 'PRODUCT_VIEW' },
   { label: 'Inventory', to: '/inventory', icon: <LayersIcon />, permission: 'STOCK_VIEW' },
   { label: 'Customers', to: '/customers', icon: <UsersIcon />, permission: 'CUSTOMER_VIEW' },

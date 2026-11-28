@@ -9,6 +9,9 @@ import { CustomerCreatePage } from '../features/customers/CustomerCreatePage'
 import { CustomerDetailPage } from '../features/customers/CustomerDetailPage'
 import { CustomerListPage } from '../features/customers/CustomerListPage'
 import { InventoryPage } from '../features/inventory/InventoryPage'
+import { OrderCreatePage } from '../features/orders/OrderCreatePage'
+import { OrderDetailPage } from '../features/orders/OrderDetailPage'
+import { OrderListPage } from '../features/orders/OrderListPage'
 import { VariantStockPage } from '../features/inventory/VariantStockPage'
 import { ProductCreatePage } from '../features/products/ProductCreatePage'
 import { ProductEditPage } from '../features/products/ProductEditPage'
@@ -48,6 +51,14 @@ export function AppRoutes() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
+          {/* Status buttons follow each order's allowedActions (status + the user's permissions). */}
+          <Route element={<RequirePermission permission="ORDER_VIEW" />}>
+            <Route path="/orders" element={<OrderListPage />} />
+            <Route path="/orders/:id" element={<OrderDetailPage />} />
+          </Route>
+          <Route element={<RequirePermission permission="ORDER_CREATE" />}>
+            <Route path="/orders/new" element={<OrderCreatePage />} />
+          </Route>
           {/* Without PRODUCT_EDIT the product page is read-only; creating needs PRODUCT_EDIT. */}
           <Route element={<RequirePermission permission="PRODUCT_VIEW" />}>
             <Route path="/products" element={<ProductListPage />} />

@@ -2,6 +2,7 @@ package com.sellerdesk.order.service;
 
 import com.sellerdesk.auth.model.User;
 import com.sellerdesk.auth.service.UserService;
+import com.sellerdesk.common.dto.PageResponse;
 import com.sellerdesk.common.error.ApiError;
 import com.sellerdesk.common.error.AppException;
 import com.sellerdesk.common.error.FieldValidationException;
@@ -18,16 +19,21 @@ import com.sellerdesk.customer.service.OrderCustomer;
 import com.sellerdesk.inventory.service.InventoryService;
 import com.sellerdesk.inventory.service.OrderRef;
 import com.sellerdesk.inventory.service.StockLine;
+import com.sellerdesk.order.dto.BulkStatusRequest;
+import com.sellerdesk.order.dto.BulkStatusResponse;
 import com.sellerdesk.order.dto.CreateOrderRequest;
 import com.sellerdesk.order.dto.OrderItemRequest;
 import com.sellerdesk.order.dto.OrderResponse;
+import com.sellerdesk.order.dto.OrderSummary;
 import com.sellerdesk.order.dto.ReturnRequest;
 import com.sellerdesk.order.dto.ShipRequest;
+import com.sellerdesk.order.dto.TimelineEntry;
 import com.sellerdesk.order.dto.UpdateOrderRequest;
 import com.sellerdesk.order.model.Order;
 import com.sellerdesk.order.model.OrderCustomerSnapshot;
 import com.sellerdesk.order.model.OrderEdit;
 import com.sellerdesk.order.model.OrderItem;
+import com.sellerdesk.order.model.OrderSource;
 import com.sellerdesk.order.model.OrderStatus;
 import com.sellerdesk.order.model.Shipping;
 import com.sellerdesk.order.model.StatusChange;
@@ -41,6 +47,9 @@ import com.sellerdesk.shop.service.ShopSettingsLookup;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -53,7 +62,9 @@ import lombok.RequiredArgsConstructor;
 import org.bson.types.ObjectId;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -100,6 +111,51 @@ public class OrderService {
 
     public OrderResponse get(String orderId) {
         return respond(load(currentUser.shopId(), orderId));
+    }
+
+    /**
+     * The shop's orders, newest first by default (docs/modules/ORDER.md §8). Every filter is
+     * optional; they combine with AND.
+     *
+     * @param statuses any of these ({@code ?status=PENDING&status=CONFIRMED})
+     * @param from     Dhaka day {@code YYYY-MM-DD}, inclusive
+     * @param to       Dhaka day, inclusive
+     * @param q        order number ({@code SD-1042}, {@code 1042}) or customer phone (any format)
+     * @param sort     {@code createdAt,desc} (default) or {@code createdAt,asc}
+     */
+    public PageResponse<OrderSummary> list(List<String> statuses, String source, String from, String to, String q,
+                                           String sort, int page, int size) {
+        String shopId = currentUser.shopId();
+        Instant fromInstant = OrderRules.startOfDay(from, "from");
+        Instant toExclusive = OrderRules.endOfDay(to, "to");
+        if (fromInstant != null && toExclusive != null && !fromInstant.isBefore(toExclusive)) {
+            throw new FieldValidationException("from", "must not be after to");
+        }
+        OrderRules.Search search = OrderRules.parseSearch(q);
+        OrderQueryRepository.ListFilter filter = new OrderQueryRepository.ListFilter(
+                parseStatuses(statuses), parseEnum(OrderSource.class, source, "source"), fromInstant, toExclusive,
+                search == null ? null : search.orderNumber(), search == null ? null : search.phone(),
+                parseAscending(sort), page, size);
+        OrderQueryRepository.ListResult result = queryRepository.list(shopId, filter);
+        return PageResponse.of(result.content().stream().map(OrderMapper::toSummary).toList(), page, size,
+                result.totalElements());
+    }
+
+    /** Status changes and edits of one order, oldest first (docs/modules/ORDER.md §8). */
+    public List<TimelineEntry> timeline(String orderId) {
+        Order order = load(currentUser.shopId(), orderId);
+        List<TimelineEntry> entries = new ArrayList<>();
+        for (StatusChange h : order.getStatusHistory()) {
+            entries.add(new TimelineEntry(TimelineEntry.Type.STATUS, h.at(), new OrderResponse.Actor(h.by(), h.byName()),
+                    h.from(), h.to(), h.note(), null, null));
+        }
+        for (OrderEdit e : order.getEdits()) {
+            entries.add(new TimelineEntry(TimelineEntry.Type.EDIT, e.at(), new OrderResponse.Actor(e.by(), e.byName()),
+                    null, null, null, e.fields(), e.summary()));
+        }
+        // Stable sort: at equal times, status changes stay before edits and each list keeps its order.
+        entries.sort(Comparator.comparing(TimelineEntry::at));
+        return entries;
     }
 
     // ==== Create =========================================================================
@@ -246,6 +302,61 @@ public class OrderService {
                     : OrderErrors.staleVersion();
         }
         return respond(load(shopId, orderId));
+    }
+
+    // ==== Bulk status change =============================================================
+
+    /**
+     * The same action on many orders (docs/modules/ORDER.md §8). Each order goes through exactly
+     * the same method as its single endpoint, in <b>its own transaction</b>, one after the other:
+     * an order that fails (wrong status, not enough stock, not found) is reported and the others
+     * still run. An order of another shop is reported as {@code NOT_FOUND}, like an unknown id.
+     *
+     * <p>One endpoint serves several permissions, so the permission of the chosen action is
+     * checked here: missing → 403 for the whole request, nothing is changed.
+     */
+    public BulkStatusResponse bulk(BulkStatusRequest request) {
+        OrderAction action = request.action();
+        if (!currentUser.hasPermission(action.permission())) {
+            throw new AccessDeniedException("Missing permission " + action.permission());
+        }
+        if (action == OrderAction.RETURN) {
+            throw new FieldValidationException("action", "RETURN is not possible in bulk: each item needs a restock choice");
+        }
+        String reason = OrderRules.text(request.reason());
+        if (action == OrderAction.CANCEL && reason == null) {
+            throw new FieldValidationException("reason", "is required to cancel");
+        }
+        if (new HashSet<>(request.orderIds()).size() != request.orderIds().size()) {
+            throw new FieldValidationException("orderIds", "must not contain the same order twice");
+        }
+
+        List<BulkStatusResponse.Result> results = new ArrayList<>();
+        for (String orderId : request.orderIds()) {
+            results.add(bulkOne(action, orderId, request, reason));
+        }
+        int succeeded = (int) results.stream().filter(BulkStatusResponse.Result::ok).count();
+        return new BulkStatusResponse(action, succeeded, results.size() - succeeded, results);
+    }
+
+    private BulkStatusResponse.Result bulkOne(OrderAction action, String orderId, BulkStatusRequest request,
+                                              String reason) {
+        try {
+            OrderResponse done = switch (action) {
+                case CONFIRM -> confirm(orderId, request.note());
+                case PACK -> pack(orderId, request.note());
+                case SHIP -> ship(orderId, new ShipRequest(request.courierName(), null, request.note()));
+                case DELIVER -> deliver(orderId, request.note());
+                case CANCEL -> cancel(orderId, reason);
+                case RETURN -> throw new IllegalStateException("RETURN is refused before the loop");
+            };
+            return new BulkStatusResponse.Result(orderId, done.orderNumber(), true, done.status(), null, null);
+        } catch (AppException e) {
+            return new BulkStatusResponse.Result(orderId, null, false, null, e.getCode(), e.getMessage());
+        } catch (OptimisticLockingFailureException e) {
+            return new BulkStatusResponse.Result(orderId, null, false, null, "CONCURRENT_MODIFICATION",
+                    "The order was changed by someone else; try again");
+        }
     }
 
     // ==== Status changes =================================================================
@@ -437,6 +548,41 @@ public class OrderService {
     }
 
     // ==== Helpers ========================================================================
+
+    private static Set<OrderStatus> parseStatuses(List<String> values) {
+        Set<OrderStatus> statuses = EnumSet.noneOf(OrderStatus.class);
+        if (values != null) {
+            for (String value : values) {
+                if (OrderRules.text(value) != null) {
+                    statuses.add(parseEnum(OrderStatus.class, value, "status"));
+                }
+            }
+        }
+        return statuses;
+    }
+
+    private static <E extends Enum<E>> E parseEnum(Class<E> type, String value, String field) {
+        String text = OrderRules.text(value);
+        if (text == null) {
+            return null;
+        }
+        try {
+            return Enum.valueOf(type, text);
+        } catch (IllegalArgumentException e) {
+            throw new FieldValidationException(field, "must be one of " + Arrays.toString(type.getEnumConstants()));
+        }
+    }
+
+    private static boolean parseAscending(String sort) {
+        String text = OrderRules.text(sort);
+        if (text == null || "createdAt,desc".equals(text)) {
+            return false;
+        }
+        if ("createdAt,asc".equals(text)) {
+            return true;
+        }
+        throw new FieldValidationException("sort", "must be createdAt,desc or createdAt,asc");
+    }
 
     private Order load(String shopId, String orderId) {
         if (orderId == null || !ObjectId.isValid(orderId)) {

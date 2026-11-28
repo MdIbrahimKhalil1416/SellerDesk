@@ -375,10 +375,17 @@ Full design: `modules/ORDER.md` §2–§4 (built: `order.model.Order`). Summary:
 
 **Indexes:**
 - `{ shopId: 1, orderNumber: 1 }` **unique**.
-- `{ shopId: 1, status: 1, createdAt: -1 }`: pipeline tabs, status + date filter.
-- `{ shopId: 1, createdAt: -1 }`: default list, date range.
+- `{ shopId: 1, createdAt: -1, _id: -1 }`: default list, date range.
+- `{ shopId: 1, status: 1, createdAt: -1, _id: -1 }`: pipeline tabs, one or more statuses (+ date).
+- `{ shopId: 1, source: 1, createdAt: -1, _id: -1 }`: source filter.
+- `{ shopId: 1, "customer.phone": 1, createdAt: -1, _id: -1 }`: search by phone.
 - `{ shopId: 1, customerId: 1, createdAt: -1 }`: customer order history.
-- `{ shopId: 1, "customer.phone": 1, createdAt: -1 }`: search by phone.
+
+The list sorts by `createdAt, _id` (`_id` breaks ties, so pages never overlap). The list indexes
+end with exactly these two fields, so MongoDB reads the rows in index order and never sorts in
+memory; `OrderListIntegrationTest` checks this with `explain`. The first build used indexes
+named `shopId_status_createdAt`, `shopId_createdAt` and `shopId_customerPhone_createdAt`; a
+database that still has them can drop them (`db.orders.dropIndex(name)`), nothing uses them.
 - `{ shopId: 1, requestId: 1 }` **unique**, partial (`requestId` exists): idempotent create.
 - `{ shopId: 1, "items.productId": 1 }`: "is this product used?".
 

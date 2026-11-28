@@ -388,6 +388,55 @@ class OrderServiceTest {
         }
     }
 
+    // ==== Bulk ===========================================================================
+
+    @Nested
+    class Bulk {
+
+        private com.sellerdesk.order.dto.BulkStatusRequest request(OrderAction action, String reason, String... ids) {
+            return new com.sellerdesk.order.dto.BulkStatusRequest(action, List.of(ids), null, reason, null);
+        }
+
+        @Test
+        void missingPermissionOfTheActionIs403BeforeAnyOrderIsTouched() {
+            when(currentUser.hasPermission(com.sellerdesk.common.security.Permission.ORDER_CONFIRM)).thenReturn(false);
+            assertThatThrownBy(() -> service.bulk(request(OrderAction.CONFIRM, null, ORDER)))
+                    .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+            verifyNoInteractions(orderRepository, inventoryService);
+        }
+
+        @Test
+        void returnInBulkCancelWithoutReasonAndDuplicatesAre400() {
+            when(currentUser.hasPermission(any())).thenReturn(true);
+            assertThatThrownBy(() -> service.bulk(request(OrderAction.RETURN, "x", ORDER)))
+                    .satisfies(e -> assertThat(((AppException) e).getFieldErrors().get(0).field()).isEqualTo("action"));
+            assertThatThrownBy(() -> service.bulk(request(OrderAction.CANCEL, " ", ORDER)))
+                    .satisfies(e -> assertThat(((AppException) e).getFieldErrors().get(0).field()).isEqualTo("reason"));
+            assertThatThrownBy(() -> service.bulk(request(OrderAction.PACK, null, ORDER, ORDER)))
+                    .satisfies(e -> assertThat(((AppException) e).getFieldErrors().get(0).field()).isEqualTo("orderIds"));
+            verifyNoInteractions(orderRepository);
+        }
+
+        @Test
+        void oneFailingOrderDoesNotStopTheOthers() {
+            when(currentUser.hasPermission(any())).thenReturn(true);
+            String missing = new ObjectId().toHexString();
+            Order pending = existingOrder(OrderStatus.PENDING);
+            when(orderRepository.findByIdAndShopId(ORDER, SHOP)).thenReturn(Optional.of(pending));
+            when(orderRepository.findByIdAndShopId(missing, SHOP)).thenReturn(Optional.empty());
+            when(queryRepository.updateIf(eq(SHOP), eq(ORDER), any(), isNull(), any())).thenReturn(true);
+
+            var result = service.bulk(request(OrderAction.CANCEL, "spam", missing, ORDER));
+
+            assertThat(result.succeeded()).isOne();
+            assertThat(result.failed()).isOne();
+            assertThat(result.results().get(0).errorCode()).isEqualTo(OrderErrors.NOT_FOUND);
+            assertThat(result.results().get(1).ok()).isTrue();
+            assertThat(result.results().get(1).orderNumber()).isEqualTo("SD-7");
+            verify(customerService).recordCancelled(CUSTOMER);
+        }
+    }
+
     @Test
     void itemSummaryDescribesAddedChangedAndRemovedLines() {
         OrderItem tee = item("TEE-M", "v1", 1, 100);

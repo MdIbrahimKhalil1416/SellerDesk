@@ -3,6 +3,7 @@ package com.sellerdesk.order.service;
 import com.sellerdesk.common.dto.AddressDto;
 import com.sellerdesk.common.security.CurrentUser;
 import com.sellerdesk.order.dto.OrderResponse;
+import com.sellerdesk.order.dto.OrderSummary;
 import com.sellerdesk.order.model.Order;
 import com.sellerdesk.order.model.OrderItem;
 import java.util.Arrays;
@@ -37,6 +38,17 @@ public class OrderMapper {
                 o.getCodAmount(), o.getNote(), shipping, o.getCancelReason(), o.getReturnReason(), history,
                 allowedActions(o), new OrderResponse.Actor(o.getCreatedBy(), o.getCreatedByName()),
                 o.getVersion() == null ? 0 : o.getVersion(), o.getCreatedAt(), o.getUpdatedAt());
+    }
+
+    /** A list row. District and zone come from the delivery address snapshot. */
+    public static OrderSummary toSummary(Order o) {
+        int units = o.getItems().stream().mapToInt(OrderItem::getQuantity).sum();
+        var address = o.getCustomer() == null ? null : o.getCustomer().address();
+        return new OrderSummary(o.getId(), o.displayNumber(), o.getStatus(), o.getSource(), o.getCustomerId(),
+                o.getCustomer() == null ? null : o.getCustomer().name(),
+                o.getCustomer() == null ? null : o.getCustomer().phone(),
+                address == null ? null : address.district(), address == null ? null : address.zone(),
+                units, o.getTotal(), o.getCodAmount(), o.getCreatedAt());
     }
 
     /** Actions possible from the current status that the current user has the permission for. */

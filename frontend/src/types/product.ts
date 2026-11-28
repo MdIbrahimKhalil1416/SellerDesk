@@ -75,6 +75,17 @@ export interface ProductSummary {
   updatedAt: string
 }
 
+/**
+ * GET /products/lookup: active products with their active variants, for the order form. No stock
+ * and no cost price (the list is cached per shop and the same for every user).
+ */
+export interface ProductLookupItem {
+  productId: string
+  name: string
+  coverImageUrl: string | null
+  variants: Array<{ variantId: string; sku: string; name: string; price: number }>
+}
+
 export interface CategoryCount {
   name: string
   productCount: number

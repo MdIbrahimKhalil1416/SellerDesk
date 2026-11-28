@@ -1,22 +1,33 @@
 package com.sellerdesk.order.controller;
 
 import com.sellerdesk.common.config.OpenApiConfig;
+import com.sellerdesk.common.dto.PageResponse;
 import com.sellerdesk.common.error.ApiError;
+import com.sellerdesk.order.dto.BulkStatusRequest;
+import com.sellerdesk.order.dto.BulkStatusResponse;
 import com.sellerdesk.order.dto.CancelRequest;
 import com.sellerdesk.order.dto.CreateOrderRequest;
 import com.sellerdesk.order.dto.OrderResponse;
+import com.sellerdesk.order.dto.OrderSummary;
+import com.sellerdesk.order.dto.TimelineEntry;
 import com.sellerdesk.order.dto.ReturnRequest;
 import com.sellerdesk.order.dto.ShipRequest;
 import com.sellerdesk.order.dto.StatusNoteRequest;
 import com.sellerdesk.order.dto.UpdateOrderRequest;
 import com.sellerdesk.order.service.OrderService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,6 +38,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -58,6 +70,51 @@ public class OrderController {
     public ResponseEntity<OrderResponse> create(@Valid @RequestBody CreateOrderRequest request) {
         OrderService.CreateResult result = orderService.create(request);
         return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK).body(result.order());
+    }
+
+    @Operation(summary = "List orders", description = "Newest first by default. `status` may be repeated "
+            + "(`?status=PENDING&status=CONFIRMED`). `from`/`to`: Dhaka days, both inclusive. `q`: order number "
+            + "(SD-1042, 1042) or customer phone in any format.")
+    @ApiResponse(responseCode = "200", description = "A page of orders")
+    @ApiResponse(responseCode = "400", description = "VALIDATION_FAILED (unknown status/source/sort, bad date, from after to, bad q)",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    @GetMapping
+    @PreAuthorize("hasAuthority('ORDER_VIEW')")
+    public PageResponse<OrderSummary> list(
+            @Parameter(description = "PENDING, CONFIRMED, PACKED, SHIPPED, DELIVERED, CANCELLED, RETURNED; repeatable")
+            @RequestParam(required = false) @Size(max = 7) List<@Size(max = 20) String> status,
+            @Parameter(description = "FACEBOOK, MESSENGER, WHATSAPP, PHONE, OTHER")
+            @RequestParam(required = false) @Size(max = 20) String source,
+            @Parameter(description = "YYYY-MM-DD, Dhaka day, inclusive") @RequestParam(required = false) @Size(max = 10) String from,
+            @Parameter(description = "YYYY-MM-DD, Dhaka day, inclusive") @RequestParam(required = false) @Size(max = 10) String to,
+            @Parameter(description = "Order number or customer phone") @RequestParam(required = false) @Size(max = 30) String q,
+            @Parameter(description = "createdAt,desc (default) or createdAt,asc")
+            @RequestParam(defaultValue = "createdAt,desc") @Pattern(regexp = "createdAt,desc|createdAt,asc") String sort,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+        return orderService.list(status, source, from, to, q, sort, page, size);
+    }
+
+    @Operation(summary = "Change the status of many orders", description = "Same action on 1-50 orders; each runs on its "
+            + "own and the result lists every order (ok, or errorCode). Needs the permission of the action. RETURN is not "
+            + "possible in bulk; CANCEL needs a reason.")
+    @ApiResponse(responseCode = "200", description = "Per-order results (some may have failed)")
+    @ApiResponse(responseCode = "400", description = "VALIDATION_FAILED", content = @Content(schema = @Schema(implementation = ApiError.class)))
+    @ApiResponse(responseCode = "403", description = "FORBIDDEN: missing the permission of the action",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
+    @PostMapping("/bulk-status")
+    @PreAuthorize("hasAnyAuthority('ORDER_CONFIRM', 'ORDER_FULFILL', 'ORDER_CLOSE', 'ORDER_CANCEL')")
+    public BulkStatusResponse bulkStatus(@Valid @RequestBody BulkStatusRequest request) {
+        return orderService.bulk(request);
+    }
+
+    @Operation(summary = "Order timeline", description = "Status changes and edits, oldest first.")
+    @ApiResponse(responseCode = "200", description = "The timeline")
+    @ApiResponse(responseCode = "404", description = "NOT_FOUND (unknown, or of another shop)", content = @Content(schema = @Schema(implementation = ApiError.class)))
+    @GetMapping("/{id}/timeline")
+    @PreAuthorize("hasAuthority('ORDER_VIEW')")
+    public List<TimelineEntry> timeline(@PathVariable String id) {
+        return orderService.timeline(id);
     }
 
     @Operation(summary = "Get an order")

@@ -49,7 +49,8 @@ class OrderControllerTest extends MongoIntegrationTestBase {
         return Map.of(
                 Permission.ORDER_CREATE, List.of(() -> post("/api/v1/orders").contentType(json)
                         .content(orderJson(line(variantId, 1)))),
-                Permission.ORDER_VIEW, List.of(() -> get("/api/v1/orders/{id}", orderId)),
+                Permission.ORDER_VIEW, List.of(() -> get("/api/v1/orders/{id}", orderId), () -> get("/api/v1/orders"),
+                        () -> get("/api/v1/orders/{id}/timeline", orderId)),
                 Permission.ORDER_EDIT, List.of(() -> OrderTestApi.updateRequest(orderId, 0, List.of(line(variantId, 2)), "")),
                 Permission.ORDER_CONFIRM, List.of(() -> OrderTestApi.actionRequest(orderId, "confirm")),
                 Permission.ORDER_FULFILL, List.of(() -> OrderTestApi.actionRequest(orderId, "pack"),
@@ -86,6 +87,33 @@ class OrderControllerTest extends MongoIntegrationTestBase {
                 assertThat(status).as(entry.getKey().name()).isIn(200, 201, 409);
             }
         }
+    }
+
+    @Test
+    void bulkNeedsThePermissionOfItsAction() throws Exception {
+        String json = MediaType.APPLICATION_JSON_VALUE;
+        String confirmAll = "{\"action\":\"CONFIRM\",\"orderIds\":[\"%s\"]}".formatted(orderId);
+        String viewer = bearerForStaff(owner.shopId(), Role.MODERATOR, EnumSet.of(Permission.ORDER_VIEW));
+        String packer = bearerForStaff(owner.shopId(), Role.PACKER); // ORDER_FULFILL, not ORDER_CONFIRM
+        Document before = orderDocument();
+
+        for (String bearer : List.of(viewer, packer)) {
+            mockMvc.perform(post("/api/v1/orders/bulk-status").header("Authorization", bearer).contentType(json)
+                            .content(confirmAll))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        }
+        assertThat(orderDocument()).isEqualTo(before);
+
+        String confirmer = bearerForStaff(owner.shopId(), Role.MODERATOR, EnumSet.of(Permission.ORDER_CONFIRM));
+        mockMvc.perform(post("/api/v1/orders/bulk-status").header("Authorization", confirmer).contentType(json)
+                        .content(confirmAll))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").value(1));
+        mockMvc.perform(post("/api/v1/orders/bulk-status").header("Authorization", packer).contentType(json)
+                        .content("{\"action\":\"PACK\",\"orderIds\":[\"%s\"]}".formatted(orderId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.results[0].status").value("PACKED"));
     }
 
     @Test

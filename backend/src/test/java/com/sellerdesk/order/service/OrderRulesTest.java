@@ -67,6 +67,32 @@ class OrderRulesTest {
     }
 
     @Test
+    void searchTextIsAPhoneOrAnOrderNumber() {
+        assertThat(OrderRules.parseSearch(null)).isNull();
+        assertThat(OrderRules.parseSearch("  ")).isNull();
+        for (String number : List.of("SD-1042", "sd-1042", "SD1042", "AB12-1042", "#1042", "1042", " 1042 ")) {
+            assertThat(OrderRules.parseSearch(number)).as(number).isEqualTo(new OrderRules.Search(1042L, null));
+        }
+        for (String phone : List.of("01712345678", "+8801712345678", "01712-345678", "008801712345678")) {
+            assertThat(OrderRules.parseSearch(phone)).as(phone).isEqualTo(new OrderRules.Search(null, "01712345678"));
+        }
+        for (String bad : List.of("Rahim", "SD-", "SD-10a", "1234567890123", "TOOLONGPREFIX-1")) {
+            assertThatThrownBy(() -> OrderRules.parseSearch(bad)).as(bad).isInstanceOf(FieldValidationException.class);
+        }
+    }
+
+    @Test
+    void datesAreDhakaDaysAndToIsInclusive() {
+        // Dhaka is UTC+6: the day 28 Nov runs from 27 Nov 18:00 UTC to 28 Nov 18:00 UTC.
+        assertThat(OrderRules.startOfDay("2026-11-28", "from")).isEqualTo(java.time.Instant.parse("2026-11-27T18:00:00Z"));
+        assertThat(OrderRules.endOfDay("2026-11-28", "to")).isEqualTo(java.time.Instant.parse("2026-11-28T18:00:00Z"));
+        assertThat(OrderRules.startOfDay(null, "from")).isNull();
+        assertThatThrownBy(() -> OrderRules.startOfDay("28/11/2026", "from"))
+                .isInstanceOf(FieldValidationException.class)
+                .satisfies(e -> assertThat(((FieldValidationException) e).getFieldErrors().get(0).field()).isEqualTo("from"));
+    }
+
+    @Test
     void transitionTableMatchesTheDesign() {
         assertThat(OrderAction.CONFIRM.allowedFrom(OrderStatus.PENDING)).isTrue();
         assertThat(OrderAction.PACK.allowedFrom(OrderStatus.CONFIRMED)).isTrue();

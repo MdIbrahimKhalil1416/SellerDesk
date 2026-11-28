@@ -5,6 +5,7 @@ import type {
   CreateProductRequest,
   Product,
   ProductListParams,
+  ProductLookupItem,
   ProductStatus,
   ProductSummary,
   UpdateProductRequest,
@@ -22,6 +23,12 @@ export const productsApi = {
       // Empty strings are left out, so the URL stays clean and the backend uses its defaults.
       params: Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== '')),
     })
+    return data
+  },
+
+  /** Active products and variants for the order form (PRODUCT_VIEW or ORDER_CREATE). */
+  async lookup(): Promise<ProductLookupItem[]> {
+    const { data } = await api.get<ProductLookupItem[]>(`${BASE}/lookup`)
     return data
   },
 

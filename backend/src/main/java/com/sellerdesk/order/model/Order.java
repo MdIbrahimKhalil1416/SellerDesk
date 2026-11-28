@@ -23,7 +23,9 @@ import org.springframework.data.mongodb.core.mapping.FieldType;
  * status change) is a targeted update in {@code OrderQueryRepository} with a condition on the
  * status (and for edits the version), so two people can never overwrite each other.
  *
- * <p>Indexes all start with {@code shopId} (docs/SCHEMA.md §10).
+ * <p>Indexes all start with {@code shopId} (docs/SCHEMA.md §10). The list indexes end with
+ * {@code createdAt, _id}: the list sorts by exactly these two fields ({@code _id} breaks ties so
+ * paging is stable), so MongoDB reads the orders in index order and never sorts in memory.
  */
 @Getter
 @Setter
@@ -32,10 +34,16 @@ import org.springframework.data.mongodb.core.mapping.FieldType;
 @Document("orders")
 @CompoundIndexes({
         @CompoundIndex(name = "shopId_orderNumber", def = "{'shopId': 1, 'orderNumber': 1}", unique = true),
-        @CompoundIndex(name = "shopId_status_createdAt", def = "{'shopId': 1, 'status': 1, 'createdAt': -1}"),
-        @CompoundIndex(name = "shopId_createdAt", def = "{'shopId': 1, 'createdAt': -1}"),
+        // List: no filter / date range only.
+        @CompoundIndex(name = "shopId_createdAt_id", def = "{'shopId': 1, 'createdAt': -1, '_id': -1}"),
+        // List: status tabs ("all PACKED"), also several statuses at once ($in → merge of sorted ranges).
+        @CompoundIndex(name = "shopId_status_createdAt_id", def = "{'shopId': 1, 'status': 1, 'createdAt': -1, '_id': -1}"),
+        // List: source filter without status.
+        @CompoundIndex(name = "shopId_source_createdAt_id", def = "{'shopId': 1, 'source': 1, 'createdAt': -1, '_id': -1}"),
+        // List: search by customer phone.
+        @CompoundIndex(name = "shopId_customerPhone_createdAt_id", def = "{'shopId': 1, 'customer.phone': 1, 'createdAt': -1, '_id': -1}"),
+        // Orders of one customer (GET /customers/{id}/orders, later).
         @CompoundIndex(name = "shopId_customerId_createdAt", def = "{'shopId': 1, 'customerId': 1, 'createdAt': -1}"),
-        @CompoundIndex(name = "shopId_customerPhone_createdAt", def = "{'shopId': 1, 'customer.phone': 1, 'createdAt': -1}"),
         @CompoundIndex(name = "shopId_requestId", def = "{'shopId': 1, 'requestId': 1}", unique = true,
                 partialFilter = "{'requestId': {'$exists': true}}"),
         @CompoundIndex(name = "shopId_itemsProductId", def = "{'shopId': 1, 'items.productId': 1}")

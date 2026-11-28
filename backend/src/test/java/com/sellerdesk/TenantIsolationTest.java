@@ -927,6 +927,7 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
             long movementsBefore = mongoTemplate.count(new org.springframework.data.mongodb.core.query.Query(), "stock_movements");
 
             assertHiddenFromOtherShop("/api/v1/orders/" + orderOfB);
+            assertHiddenFromOtherShop("/api/v1/orders/" + orderOfB + "/timeline");
             assertNotFoundForA(com.sellerdesk.order.OrderTestApi.updateRequest(orderOfB, 1,
                     List.of(com.sellerdesk.order.OrderTestApi.line(variantOfB, 1)), ""));
             for (String action : List.of("confirm", "pack", "ship", "deliver", "return", "cancel")) {
@@ -938,6 +939,44 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
             assertThat(document("customers", customerOfB)).isEqualTo(customerBefore);
             assertThat(mongoTemplate.count(new org.springframework.data.mongodb.core.query.Query(), "stock_movements"))
                     .isEqualTo(movementsBefore);
+        }
+
+        @Test
+        void listShowsOnlyOwnOrdersAlsoWhenSearchingForBsNumberOrPhone() throws Exception {
+            String variantOfA = ProductTestApi.variantId(products.createOk(shopA.bearer(), "Alpha Kurta", "A-KURTA-1"), 0);
+            String orderOfA = com.sellerdesk.order.OrderTestApi.id(api.createOk(shopA.bearer(),
+                    com.sellerdesk.order.OrderTestApi.orderJson(java.util.UUID.randomUUID().toString(), "01912345678",
+                            "INSIDE_DHAKA", List.of(com.sellerdesk.order.OrderTestApi.line(variantOfA, 1)), "")));
+
+            String all = body(get("/api/v1/orders").header("Authorization", shopA.bearer()));
+            assertThat(all).contains(orderOfA).doesNotContain(orderOfB).contains("\"totalElements\":1");
+            // B's customer phone (OrderTestApi.PHONE) and every filter combination find nothing of B.
+            for (String query : List.of("?q=" + com.sellerdesk.order.OrderTestApi.PHONE, "?status=PENDING",
+                    "?source=MESSENGER", "?from=2020-01-01&to=2099-12-31")) {
+                String found = body(get("/api/v1/orders" + query).header("Authorization", shopA.bearer()));
+                assertThat(found).as(query).doesNotContain(orderOfB).doesNotContain(customerOfB);
+            }
+            // Both shops have an order #1: A's search for it finds only A's own.
+            String byNumber = body(get("/api/v1/orders?q=SD-1").header("Authorization", shopA.bearer()));
+            assertThat(byNumber).contains(orderOfA).doesNotContain(orderOfB).contains("\"totalElements\":1");
+        }
+
+        @Test
+        void bulkWithBsOrderReportsNotFoundAndLeavesItAlone() throws Exception {
+            org.bson.Document orderBefore = document("orders", orderOfB);
+            org.bson.Document productBefore = productOf(variantOfB);
+
+            mockMvc.perform(post("/api/v1/orders/bulk-status").header("Authorization", shopA.bearer())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"action\":\"CONFIRM\",\"orderIds\":[\"%s\"]}".formatted(orderOfB)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.succeeded").value(0))
+                    .andExpect(jsonPath("$.results[0].ok").value(false))
+                    .andExpect(jsonPath("$.results[0].errorCode").value("NOT_FOUND"))
+                    .andExpect(jsonPath("$.results[0].orderNumber").doesNotExist());
+
+            assertThat(document("orders", orderOfB)).isEqualTo(orderBefore);
+            assertThat(productOf(variantOfB)).isEqualTo(productBefore);
         }
 
         @Test
