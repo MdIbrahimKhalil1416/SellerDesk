@@ -7,7 +7,8 @@ the order in one transaction.
 
 Status: **backend built** except `PATCH .../details` and `GET /customers/{id}/orders`: create,
 get, list, `PENDING` edit, the six status actions with history, bulk status change, timeline, stock
-and customer counters. Frontend not built yet. Backend package `com.sellerdesk.order`, frontend
+and customer counters. Frontend built: `/orders` (list, tabs, filters, bulk), `/orders/new`, `/orders/:id`
+(no edit screen for PENDING orders yet). Backend package `com.sellerdesk.order`, frontend
 `features/orders`.
 
 Related: `SCHEMA.md` §9 (`orders`), §11 (transactions); `API.md` §7; `SECURITY.md` §3
