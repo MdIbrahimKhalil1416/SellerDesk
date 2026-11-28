@@ -105,3 +105,11 @@ export const ShieldIcon = () => (
     <path d="m9 12 2 2 4-4" />
   </Icon>
 )
+/** Delivery truck: courier / shipments. */
+export const TruckIcon = () => (
+  <Icon>
+    <path d="M3 6h11v10H3zM14 9h4l3 3v4h-7" />
+    <circle cx="7" cy="18" r="2" />
+    <circle cx="17" cy="18" r="2" />
+  </Icon>
+)

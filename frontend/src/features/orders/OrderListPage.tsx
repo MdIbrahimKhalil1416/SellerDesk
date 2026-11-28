@@ -12,8 +12,12 @@ import { getApiError } from '../../lib/apiError'
 import { cn } from '../../lib/cn'
 import { formatTaka } from '../../lib/money'
 import { useDebouncedValue } from '../../lib/useDebouncedValue'
-import type { BulkStatusResponse, OrderListParams, OrderSort, OrderStatus, OrderSummary } from '../../types/order'
+import type { OrderListParams, OrderSort, OrderStatus, OrderSummary } from '../../types/order'
+import type { CourierCode } from '../../types/shipment'
 import { usePermissions } from '../auth/usePermissions'
+import { SendToCourierDialog } from '../shipments/components/ShipmentDialogs'
+import { useBulkSendShipments } from '../shipments/queries'
+import { shipmentErrorMessage } from '../shipments/shipmentErrors'
 import { CancelDialog, ShipDialog } from './components/ActionDialogs'
 import { OrderStatusBadge } from './components/OrderStatusBadge'
 import { ACTION_LABELS, ACTION_RULES, BULK_ACTIONS, formatDateTime, SOURCE_LABELS, SOURCE_OPTIONS, STATUS_LABELS, STATUSES, type BulkAction } from './orderLabels'
@@ -28,6 +32,15 @@ const SORTS: Array<{ value: OrderSort; label: string }> = [
 ]
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/
+
+/** The answer of a bulk status change or a bulk courier send: one result per order. */
+interface BulkOutcome {
+  succeeded: number
+  results: Array<{ orderId: string; orderNumber?: string | null; ok: boolean; errorCode?: string | null; message?: string | null }>
+}
+
+/** What the bulk result says happened to the orders that worked. */
+type BulkVerb = 'updated' | 'sent to the courier'
 
 /**
  * /orders. Status tab, filters, search and page live in the URL
@@ -91,10 +104,11 @@ export function OrderListPage() {
 
   // ---- Selection for bulk actions: cleared whenever the list shown changes ---------------
   const bulkActions = BULK_ACTIONS.filter((a) => can(ACTION_RULES[a].permission))
-  const canSelect = bulkActions.length > 0
+  const canSendToCourier = can('ORDER_FULFILL')
+  const canSelect = bulkActions.length > 0 || canSendToCourier
   const listKey = searchParams.toString()
   const [selected, setSelected] = useState<Map<string, OrderSummary>>(new Map())
-  const [bulkResult, setBulkResult] = useState<{ response: BulkStatusResponse; numbers: Map<string, string> } | null>(null)
+  const [bulkResult, setBulkResult] = useState<{ response: BulkOutcome; numbers: Map<string, string>; verb: BulkVerb } | null>(null)
   const [selectionKey, setSelectionKey] = useState(listKey)
   if (listKey !== selectionKey) {
     setSelectionKey(listKey)
@@ -170,14 +184,15 @@ export function OrderListPage() {
         <BulkBar
           selected={[...selected.values()]}
           actions={bulkActions}
+          canSendToCourier={canSendToCourier}
           onClear={() => setSelected(new Map())}
-          onFinished={(response, numbers) => {
+          onFinished={(response, numbers, verb) => {
             setSelected(new Map())
-            setBulkResult({ response, numbers })
+            setBulkResult({ response, numbers, verb })
           }}
         />
       )}
-      {bulkResult && <BulkResult result={bulkResult.response} numbers={bulkResult.numbers} onClose={() => setBulkResult(null)} />}
+      {bulkResult && <BulkResult result={bulkResult.response} numbers={bulkResult.numbers} verb={bulkResult.verb} onClose={() => setBulkResult(null)} />}
 
       {list.isPending ? (
         <ListSkeleton />
@@ -262,17 +277,25 @@ function DateInput({ label, value, onChange }: { label: string; value: string | 
 /**
  * The selection bar. Offers only actions the user has the permission for AND that at least one
  * selected order can take now; orders that cannot are reported back by the server.
+ * "Send to courier" sends only the selected PACKED orders, in batches of 20.
  */
-function BulkBar({ selected, actions, onClear, onFinished }: {
+function BulkBar({ selected, actions, canSendToCourier, onClear, onFinished }: {
   selected: OrderSummary[]
   actions: BulkAction[]
+  canSendToCourier: boolean
   onClear: () => void
   /** @param numbers order id → number, for naming failed orders (the server sends ids) */
-  onFinished: (response: BulkStatusResponse, numbers: Map<string, string>) => void
+  onFinished: (response: BulkOutcome, numbers: Map<string, string>, verb: BulkVerb) => void
 }) {
   const bulk = useBulkStatus()
-  const [dialog, setDialog] = useState<BulkAction | null>(null)
+  const courier = useBulkSendShipments()
+  const [dialog, setDialog] = useState<BulkAction | 'COURIER' | null>(null)
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const numbers = useMemo(() => new Map(selected.map((o) => [o.id, o.orderNumber])), [selected])
+  const packed = selected.filter((o) => o.status === 'PACKED')
+  const busy = bulk.isPending || courier.isPending
+  /** The actions that only need a yes / no. */
+  const simpleDialog = dialog === 'CONFIRM' || dialog === 'PACK' || dialog === 'DELIVER' ? dialog : null
 
   const possible = actions.filter((a) => selected.some((o) => ACTION_RULES[a].from.includes(o.status)))
   const fitting = (a: BulkAction) => selected.filter((o) => ACTION_RULES[a].from.includes(o.status)).length
@@ -283,8 +306,22 @@ function BulkBar({ selected, actions, onClear, onFinished }: {
       {
         onSuccess: (response) => {
           setDialog(null)
-          onFinished(response, numbers)
+          onFinished(response, numbers, 'updated')
         },
+      },
+    )
+  }
+
+  function sendToCourier(provider: CourierCode) {
+    setProgress({ done: 0, total: packed.length })
+    courier.mutate(
+      { provider, orderIds: packed.map((o) => o.id), onProgress: (done, total) => setProgress({ done, total }) },
+      {
+        onSuccess: (response) => {
+          setDialog(null)
+          onFinished(response, numbers, 'sent to the courier')
+        },
+        onSettled: () => setProgress(null),
       },
     )
   }
@@ -296,18 +333,46 @@ function BulkBar({ selected, actions, onClear, onFinished }: {
       <div className="sticky top-16 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
         <span className="text-sm font-medium text-indigo-900">{selected.length} selected</span>
         <div className="flex flex-1 flex-wrap justify-end gap-2">
-          {possible.length === 0 && <span className="text-sm text-indigo-800">No action fits all of these orders.</span>}
+          {possible.length === 0 && !(canSendToCourier && packed.length > 0) && (
+            <span className="text-sm text-indigo-800">No action fits all of these orders.</span>
+          )}
+          {canSendToCourier && packed.length > 0 && (
+            <Button
+              variant="secondary"
+              loading={courier.isPending}
+              disabled={busy}
+              onClick={() => {
+                courier.reset()
+                setDialog('COURIER')
+              }}
+            >
+              Send to courier ({packed.length})
+            </Button>
+          )}
           {possible.map((a) => (
-            <Button key={a} variant="secondary" loading={bulk.isPending && bulk.variables?.action === a} disabled={bulk.isPending} onClick={() => setDialog(a)}>
+            <Button key={a} variant="secondary" loading={bulk.isPending && bulk.variables?.action === a} disabled={busy} onClick={() => setDialog(a)}>
               {ACTION_LABELS[a]} ({fitting(a)})
             </Button>
           ))}
-          <Button variant="ghost" onClick={onClear} disabled={bulk.isPending}>
+          <Button variant="ghost" onClick={onClear} disabled={busy}>
             Clear
           </Button>
         </div>
       </div>
       {error && !dialog && <Alert tone="error">{error}</Alert>}
+
+      {dialog === 'COURIER' && (
+        <SendToCourierDialog
+          open
+          bulkCount={packed.length}
+          skipped={selected.length - packed.length}
+          busy={courier.isPending}
+          progress={progress}
+          error={courier.isError ? shipmentErrorMessage(courier.error, 'Could not send the orders to the courier.') : null}
+          onConfirm={(body) => sendToCourier(body.provider)}
+          onClose={() => setDialog(null)}
+        />
+      )}
 
       {dialog === 'CANCEL' && (
         <CancelDialog
@@ -330,11 +395,11 @@ function BulkBar({ selected, actions, onClear, onFinished }: {
         />
       )}
       <ConfirmDialog
-        open={dialog === 'CONFIRM' || dialog === 'PACK' || dialog === 'DELIVER'}
-        title={dialog ? `${ACTION_LABELS[dialog]}: ${selected.length} orders?` : ''}
-        confirmLabel={dialog ? ACTION_LABELS[dialog] : ''}
+        open={simpleDialog !== null}
+        title={simpleDialog ? `${ACTION_LABELS[simpleDialog]}: ${selected.length} orders?` : ''}
+        confirmLabel={simpleDialog ? ACTION_LABELS[simpleDialog] : ''}
         loading={bulk.isPending}
-        onConfirm={() => dialog && run(dialog)}
+        onConfirm={() => simpleDialog && run(simpleDialog)}
         onCancel={() => setDialog(null)}
       >
         Each order is handled on its own: orders that cannot be changed are listed afterwards, the others go ahead.
@@ -346,14 +411,15 @@ function BulkBar({ selected, actions, onClear, onFinished }: {
   )
 }
 
-function BulkResult({ result, numbers, onClose }: { result: BulkStatusResponse; numbers: Map<string, string>; onClose: () => void }) {
+function BulkResult({ result, numbers, verb, onClose }: { result: BulkOutcome; numbers: Map<string, string>; verb: BulkVerb; onClose: () => void }) {
   const failed = result.results.filter((r) => !r.ok)
   return (
     <Alert tone={failed.length === 0 ? 'success' : result.succeeded === 0 ? 'error' : 'info'}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="font-medium">
-            {result.succeeded} updated{failed.length > 0 && `, ${failed.length} not changed`}.
+            {result.succeeded} {verb}
+            {failed.length > 0 && `, ${failed.length} not ${verb === 'updated' ? 'changed' : 'sent'}`}.
           </p>
           {failed.length > 0 && (
             <ul className="mt-1 list-disc pl-5">

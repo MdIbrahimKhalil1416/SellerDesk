@@ -5,7 +5,7 @@ Books packed orders with a courier, follows each parcel through the courier's st
 the COD amount; this module records what the courier reports (`collectedAmount`). Matching that
 against the courier's payouts is the later COD reconciliation module.
 
-Status: **backend built** (2026-11-28), frontend not yet. Phase 2 ships only a
+Status: **backend and frontend built** (2026-11-28). Phase 2 ships only a
 `MockCourierProvider`; real providers (Steadfast, Pathao) are added later behind the same
 interface. Backend package `com.sellerdesk.courier`, plus `common.security.SystemActor` /
 `SystemActorScope`. Configuration: `sellerdesk.courier.*` in `application.yml` (the mock is off in

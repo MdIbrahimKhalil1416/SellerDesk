@@ -17,6 +17,7 @@ import { ProductCreatePage } from '../features/products/ProductCreatePage'
 import { ProductEditPage } from '../features/products/ProductEditPage'
 import { ProductListPage } from '../features/products/ProductListPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
+import { ShipmentListPage } from '../features/shipments/ShipmentListPage'
 import { AcceptInvitePage } from '../features/staff/AcceptInvitePage'
 import { StaffPage } from '../features/staff/StaffPage'
 import { AppLayout } from '../layouts/AppLayout'
@@ -55,6 +56,8 @@ export function AppRoutes() {
           <Route element={<RequirePermission permission="ORDER_VIEW" />}>
             <Route path="/orders" element={<OrderListPage />} />
             <Route path="/orders/:id" element={<OrderDetailPage />} />
+            {/* Send / cancel buttons follow ORDER_FULFILL and each shipment's allowedActions. */}
+            <Route path="/shipments" element={<ShipmentListPage />} />
           </Route>
           <Route element={<RequirePermission permission="ORDER_CREATE" />}>
             <Route path="/orders/new" element={<OrderCreatePage />} />

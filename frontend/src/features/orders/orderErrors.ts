@@ -3,7 +3,8 @@ import { errorMessage, getApiError } from '../../lib/apiError'
 /** User-facing text per backend error code (docs/modules/ORDER.md §8). Switch on `code`. */
 const ORDER_ERROR_MESSAGES: Record<string, string> = {
   INVALID_STATUS_TRANSITION: 'This order has already moved on. Reload to see its current status.',
-  ORDER_NOT_EDITABLE: 'This order can no longer be changed.',
+  SHIPMENT_ACTIVE: 'This order is booked with a courier. Cancel the courier booking first.',
+  ORDER_NOT_EDITABLE:'This order can no longer be changed.',
   VARIANT_NOT_ORDERABLE: 'Some products are archived or inactive and cannot be ordered. Remove them.',
   REQUEST_ID_REUSED: 'This form was already sent with different content. Reload the page and try again.',
   CONCURRENT_MODIFICATION: 'Someone else changed this order in the meantime. Reload and try again.',

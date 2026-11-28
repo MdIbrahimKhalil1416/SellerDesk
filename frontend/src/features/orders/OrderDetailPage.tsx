@@ -9,8 +9,14 @@ import { getApiError } from '../../lib/apiError'
 import { cn } from '../../lib/cn'
 import { formatTaka } from '../../lib/money'
 import type { Order, OrderAction } from '../../types/order'
+import type { SendShipmentRequest } from '../../types/shipment'
 import { usePermissions } from '../auth/usePermissions'
 import { ZONE_LABELS } from '../customers/customerForm'
+import { SendToCourierDialog } from '../shipments/components/ShipmentDialogs'
+import { ShipmentPanel } from '../shipments/components/ShipmentPanel'
+import { useOrderShipments, useSendShipment } from '../shipments/queries'
+import { COURIER_LABELS, isActiveShipment } from '../shipments/shipmentLabels'
+import { rejectedFieldsOf, shipmentErrorMessage } from '../shipments/shipmentErrors'
 import { CancelDialog, ReturnDialog, ShipDialog } from './components/ActionDialogs'
 import { MoneyLines } from './components/MoneyLines'
 import { OrderStatusBadge } from './components/OrderStatusBadge'
@@ -53,12 +59,14 @@ export function OrderDetailPage() {
   return <OrderDetail order={order.data} />
 }
 
-/** Which dialog is open. CONFIRM and PACK need none. */
-type OpenDialog = 'SHIP' | 'DELIVER' | 'RETURN' | 'CANCEL' | null
+/** Which dialog is open. CONFIRM and PACK need none; COURIER = send to courier. */
+type OpenDialog = 'SHIP' | 'DELIVER' | 'RETURN' | 'CANCEL' | 'COURIER' | null
 
 function OrderDetail({ order }: { order: Order }) {
   const { can } = usePermissions()
   const action = useOrderAction(order.id)
+  const shipments = useOrderShipments(order.id)
+  const send = useSendShipment(order.id)
   const [dialog, setDialog] = useState<OpenDialog>(null)
   const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
   /** After a failed confirm: item index → "SKU: requested 3, available 1". */
@@ -93,9 +101,34 @@ function OrderDetail({ order }: { order: Order }) {
     }
   }
 
+  function onSend(body: SendShipmentRequest) {
+    setMessage(null)
+    send.mutate(body, {
+      onSuccess: (shipment) => {
+        setDialog(null)
+        setMessage(
+          shipment.status === 'BOOKING'
+            ? { tone: 'success', text: 'The courier did not answer yet. SellerDesk will retry automatically.' }
+            : {
+                tone: 'success',
+                text: `Booked with ${COURIER_LABELS[shipment.provider]}${shipment.trackingCode ? `, tracking ${shipment.trackingCode}` : ''}.`,
+              },
+        )
+      },
+    })
+  }
+
   const dialogError = dialog && action.isError ? orderErrorMessage(action.error, 'Could not change the status.') : null
   const stockReserved = order.status === 'CONFIRMED' || order.status === 'PACKED'
   const busyAction = action.isPending ? action.variables?.action : undefined
+
+  // While a courier booking is active, manual ship and cancel are refused (409 SHIPMENT_ACTIVE):
+  // hide them. Sending needs a PACKED order, ORDER_FULFILL and no active booking; it is offered
+  // only once the bookings are loaded, so we never offer it for an order that is already booked.
+  const hasActiveShipment = shipments.data?.some((s) => isActiveShipment(s.status)) ?? false
+  const orderActions = order.allowedActions.filter((a) => !(hasActiveShipment && (a === 'SHIP' || a === 'CANCEL')))
+  const canSend = order.status === 'PACKED' && can('ORDER_FULFILL') && shipments.isSuccess && !hasActiveShipment
+  const busy = action.isPending || send.isPending
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -113,15 +146,28 @@ function OrderDetail({ order }: { order: Order }) {
             {formatDateTime(order.createdAt)} · {SOURCE_LABELS[order.source]} · by {order.createdBy.name}
           </p>
         </div>
-        {order.allowedActions.length > 0 && (
+        {(orderActions.length > 0 || canSend) && (
           <div className="flex flex-wrap gap-2">
-            {order.allowedActions.map((a) => (
+            {canSend && (
+              <Button
+                loading={send.isPending}
+                disabled={action.isPending}
+                onClick={() => {
+                  send.reset()
+                  setDialog('COURIER')
+                }}
+              >
+                Send to courier
+              </Button>
+            )}
+            {orderActions.map((a) => (
               <Button
                 key={a}
-                variant={a === 'CANCEL' ? 'secondary' : 'primary'}
+                // With a courier at hand, marking shipped by hand is the fallback, not the main action.
+                variant={a === 'CANCEL' || (canSend && a === 'SHIP') ? 'secondary' : 'primary'}
                 className={a === 'CANCEL' ? 'text-red-700' : undefined}
                 loading={busyAction === a}
-                disabled={action.isPending && busyAction !== a}
+                disabled={busy && busyAction !== a}
                 onClick={() => onAction(a)}
               >
                 {ACTION_LABELS[a]}
@@ -156,6 +202,7 @@ function OrderDetail({ order }: { order: Order }) {
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="space-y-6">
           <ItemsSection order={order} shortItems={shortItems} />
+          <ShipmentPanel order={order} />
           <OrderTimeline orderId={order.id} />
         </div>
         <div className="space-y-6">
@@ -188,6 +235,16 @@ function OrderDetail({ order }: { order: Order }) {
           busy={action.isPending}
           error={dialogError}
           onConfirm={(reason) => run({ action: 'CANCEL', reason }, 'Order cancelled.')}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'COURIER' && (
+        <SendToCourierDialog
+          open
+          busy={send.isPending}
+          error={send.isError ? shipmentErrorMessage(send.error, 'Could not send the order to the courier.') : null}
+          errorDetails={rejectedFieldsOf(send.error)}
+          onConfirm={onSend}
           onClose={() => setDialog(null)}
         />
       )}
