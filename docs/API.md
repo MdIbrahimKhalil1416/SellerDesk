@@ -1,4 +1,4 @@
-# SellerDesk — REST API (Phase 1)
+# SellerDesk — REST API (Phase 1, courier: Phase 2)
 
 - Base path: `/api/v1`
 - JSON only. Money in **poisha** (`long`). Times in ISO-8601 UTC.
@@ -242,11 +242,70 @@ per item (with `STOCK_VIEW`) so the moderator sees shortages early.
 Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `403 FORBIDDEN`, `404 NOT_FOUND`
 (unknown or other shop's order, customer or variant), `409 VARIANT_NOT_ORDERABLE`,
 `INVALID_STATUS_TRANSITION`, `ORDER_NOT_EDITABLE`, `INSUFFICIENT_STOCK`,
-`CONCURRENT_MODIFICATION`, `REQUEST_ID_REUSED`.
+`CONCURRENT_MODIFICATION`, `REQUEST_ID_REUSED`, `SHIPMENT_ACTIVE` (`ship` / `cancel` while the order is
+booked with a courier, §8).
 
 ---
 
-## 8. Dashboard
+## 8. Shipments (courier)
+
+Full design: `modules/COURIER.md`. Phase 2 has one courier, `MOCK` (a pretend courier for dev and
+tests; off in prod). Money in poisha.
+
+**Rules.** Only `PACKED` orders can be sent. Booking does **not** ship the order: it stays
+`PACKED` until the courier reports the pickup, then it becomes `SHIPPED` (stock `DEDUCT`).
+Courier `DELIVERED` delivers the order; courier `RETURNED` only marks the shipment (staff then call
+`POST /orders/{id}/return` with the restock choices). While an order has an active shipment
+(`BOOKING`, `CREATED`, `PICKED_UP`, `IN_TRANSIT`), `POST /orders/{id}/ship` and `/cancel` (also in
+bulk) answer `409 SHIPMENT_ACTIVE`.
+
+| Method | Path | Auth | Request → Response |
+|--------|------|------|--------------------|
+| POST | `/orders/{id}/shipment` | `ORDER_FULFILL` | `{provider: MOCK, note? (≤200)}` → `201 ShipmentResponse` (`CREATED`), or `202` (`BOOKING`: the courier did not answer; SellerDesk retries automatically with the same reference, so no second parcel), or `200` (already booked with this courier). `409 ORDER_NOT_PACKED`, `409 SHIPMENT_ALREADY_ACTIVE` (booked with another courier), `409 COURIER_REJECTED` (the courier refused; `fieldErrors` where known, e.g. `recipient.phone`; the shipment is `FAILED` and the order can be sent again), `400 COURIER_NOT_AVAILABLE`. |
+| GET | `/orders/{id}/shipments` | `ORDER_VIEW` | → `[ShipmentSummary]`, every booking attempt, newest first |
+| GET | `/shipments` | `ORDER_VIEW` | `?status=&provider=&page=&size=` → page of `ShipmentSummary`, newest change first (e.g. `status=RETURNED` for the "Returned by courier" tab). Unknown value → `400`. |
+| GET | `/shipments/{id}` | `ORDER_VIEW` | → `ShipmentResponse` |
+| POST | `/shipments/{id}/track` | `ORDER_VIEW` | no body → `ShipmentResponse`. Asks the courier (at most once a minute per shipment) and applies the answer like a webhook, which may move the order. `503 COURIER_UNAVAILABLE` → nothing changed. |
+| POST | `/shipments/{id}/cancel` | `ORDER_FULFILL` | `{reason (1–500)}` → `ShipmentResponse` (`CANCELLED`). Only `BOOKING` / `CREATED`, else `409 SHIPMENT_NOT_CANCELLABLE`. Again on a cancelled shipment → `200`. The order stays `PACKED`. `503 COURIER_UNAVAILABLE` → nothing changed. |
+| POST | `/shipments/bulk` | `ORDER_FULFILL` | `{provider, orderIds (1–20, unique)}` → `200 {provider, succeeded, failed, results[{orderId, orderNumber?, ok, shipmentId?, status?, errorCode?, message?}]}`. One order after the other, like the single send; `BOOKING` counts as ok; another shop's or unknown id → `NOT_FOUND`. |
+| POST | `/webhooks/courier/{provider}` | **public, signed** | Called by the courier (below) → `200 {result: PROCESSED\|DUPLICATE\|IGNORED}`. `401 INVALID_SIGNATURE`, `404 NOT_FOUND` (unknown courier or consignment: the courier retries later), `400 MALFORMED_REQUEST`, `413 PAYLOAD_TOO_LARGE` (> 64 KB). |
+
+`ShipmentResponse`: `{id, orderId, orderNumber, provider, consignmentId, trackingCode, status (BOOKING |
+CREATED | PICKED_UP | IN_TRANSIT | DELIVERED | RETURNED | CANCELLED | FAILED), codAmount, collectedAmount,
+codMismatch, courierFee, recipient{name, phone, address}, note, failureReason, needsManualCheck,
+cancelReason, events[{at, source (USER|SYSTEM|WEBHOOK|POLL), status, providerStatus, ignored, note}],
+allowedActions (TRACK, CANCEL), createdBy{id, name}, createdAt, updatedAt}`. `needsManualCheck = true`:
+SellerDesk gave up after repeated timeouts and does not know whether the courier has the parcel; check
+the courier's panel before sending again. `codMismatch = true`: the courier collected a different
+amount than `codAmount`.
+
+`ShipmentSummary`: `{id, orderId, orderNumber, provider, consignmentId, trackingCode, status, codAmount,
+collectedAmount, codMismatch, failureReason, needsManualCheck, createdAt, updatedAt}`.
+
+### Webhook (mock courier)
+
+```
+POST /api/v1/webhooks/courier/mock
+X-SD-Timestamp: 1764320000
+X-SD-Signature: sha256=<hex(HMAC_SHA256(COURIER_WEBHOOK_SECRET, timestamp + "." + rawBody))>
+
+{"eventId": "e-123", "consignmentId": "MOCK-0123456789", "merchantRef": "<shipment id>",
+ "status": "booked|picked_up|in_transit|location_update|delivered|returned|cancelled",
+ "time": "2026-11-28T10:00:00Z", "collectedAmount": 96000, "courierFee": 6000, "note": "..."}
+```
+
+- No token. The signature is checked before anything else; a timestamp more than 5 minutes off is
+  refused (no replays). Every signature problem gives the same `401`.
+- The shop is taken from the stored shipment (found by `consignmentId`, else `merchantRef`). A
+  `shopId` or `orderId` in the body is ignored.
+- Idempotent: the same event again (same `eventId`, or same consignment + status + time) →
+  `DUPLICATE`, nothing changes.
+- A status jump that is not allowed (e.g. `delivered` → `in_transit`) → `IGNORED`: stored as an
+  ignored event, nothing else changes.
+
+---
+
+## 9. Dashboard
 
 | Method | Path | Auth | Request → Response |
 |--------|------|------|--------------------|
@@ -256,7 +315,7 @@ Simple counts only. Real analytics is Phase 2+.
 
 ---
 
-## 9. Operational (not under `/api/v1`)
+## 10. Operational (not under `/api/v1`)
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|

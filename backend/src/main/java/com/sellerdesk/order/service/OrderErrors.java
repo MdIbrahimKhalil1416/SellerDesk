@@ -19,6 +19,7 @@ public final class OrderErrors {
     public static final String VARIANT_NOT_ORDERABLE = "VARIANT_NOT_ORDERABLE";
     public static final String INSUFFICIENT_STOCK = "INSUFFICIENT_STOCK";
     public static final String REQUEST_ID_REUSED = "REQUEST_ID_REUSED";
+    public static final String SHIPMENT_ACTIVE = "SHIPMENT_ACTIVE";
 
     private OrderErrors() {
     }
@@ -30,6 +31,13 @@ public final class OrderErrors {
     public static BusinessRuleException invalidTransition(OrderStatus current, OrderAction action) {
         return new BusinessRuleException(INVALID_STATUS_TRANSITION,
                 "Cannot " + action.name().toLowerCase(java.util.Locale.ROOT) + " an order that is " + current);
+    }
+
+    /** Manual ship / cancel while a courier shipment is active (docs/modules/COURIER.md §6). */
+    public static BusinessRuleException shipmentActive(OrderAction action) {
+        return new BusinessRuleException(SHIPMENT_ACTIVE, "The order is booked with a courier. "
+                + (action == OrderAction.CANCEL ? "Cancel the shipment first."
+                : "It is shipped automatically when the courier picks it up."));
     }
 
     public static BusinessRuleException notEditable(OrderStatus current) {

@@ -1046,6 +1046,138 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
         }
     }
 
+    // ==== 12. Shipments (courier) ======================================================
+
+    /**
+     * Shipments (docs/modules/COURIER.md §9). Every {@code {id}} endpoint with B's shipment or B's
+     * order → 404 and nothing moves at the courier or in B's data. Lists show only own shipments.
+     * The webhook takes the shop from the shipment, never from the body.
+     */
+    @Nested
+    class Shipments {
+
+        private com.sellerdesk.courier.CourierTestApi api;
+        private com.sellerdesk.courier.provider.mock.MockCourierProvider mockCourier;
+        private String orderOfB;
+        private String shipmentOfB;
+        private String consignmentOfB;
+
+        @BeforeEach
+        void shopBHasABookedOrder() throws Exception {
+            mockCourier = applicationContext.getBean(com.sellerdesk.courier.provider.mock.MockCourierProvider.class);
+            mockCourier.reset();
+            api = new com.sellerdesk.courier.CourierTestApi(mockMvc);
+            orderOfB = api.packedOrder(shopB.bearer(), "B-SHIP-1")[1];
+            String shipment = api.sendOk(shopB.bearer(), orderOfB);
+            shipmentOfB = com.sellerdesk.courier.CourierTestApi.id(shipment);
+            consignmentOfB = com.sellerdesk.courier.CourierTestApi.consignmentId(shipment);
+        }
+
+        @Test
+        void otherShopsShipmentAndOrderAreNotFoundOnEveryIdEndpointAndNothingMoves() throws Exception {
+            org.bson.Document shipmentBefore = document("shipments", shipmentOfB);
+            org.bson.Document orderBefore = document("orders", orderOfB);
+            String parcelStatusBefore = mockCourier.parcel(consignmentOfB).orElseThrow().status();
+
+            assertHiddenFromOtherShop("/api/v1/shipments/" + shipmentOfB);
+            assertHiddenFromOtherShop("/api/v1/orders/" + orderOfB + "/shipments");
+            assertNotFoundForA(post("/api/v1/shipments/{id}/track", shipmentOfB));
+            assertNotFoundForA(com.sellerdesk.courier.CourierTestApi.cancelRequest(shipmentOfB));
+            assertNotFoundForA(com.sellerdesk.courier.CourierTestApi.sendRequest(orderOfB, "MOCK"));
+
+            assertThat(document("shipments", shipmentOfB)).isEqualTo(shipmentBefore);
+            assertThat(document("orders", orderOfB)).isEqualTo(orderBefore);
+            assertThat(mockCourier.parcel(consignmentOfB).orElseThrow().status()).isEqualTo(parcelStatusBefore);
+            assertThat(mockCourier.parcels()).hasSize(1);
+        }
+
+        @Test
+        void listsShowOnlyOwnShipments() throws Exception {
+            String orderOfA = api.packedOrder(shopA.bearer(), "A-SHIP-1")[1];
+            String shipmentOfA = com.sellerdesk.courier.CourierTestApi.id(api.sendOk(shopA.bearer(), orderOfA));
+
+            for (String query : List.of("", "?status=CREATED", "?provider=MOCK")) {
+                String found = body(get("/api/v1/shipments" + query).header("Authorization", shopA.bearer()));
+                assertThat(found).as(query).contains(shipmentOfA).doesNotContain(shipmentOfB).doesNotContain(orderOfB)
+                        .contains("\"totalElements\":1");
+            }
+        }
+
+        @Test
+        void bulkWithBsOrderReportsNotFoundAndBooksNothing() throws Exception {
+            mockMvc.perform(post("/api/v1/shipments/bulk").header("Authorization", shopA.bearer())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"provider\":\"MOCK\",\"orderIds\":[\"%s\"]}".formatted(orderOfB)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.succeeded").value(0))
+                    .andExpect(jsonPath("$.results[0].errorCode").value("NOT_FOUND"))
+                    .andExpect(jsonPath("$.results[0].orderNumber").doesNotExist());
+            assertThat(mongoTemplate.count(new Query(), "shipments")).isOne();
+        }
+
+        @Test
+        void shopIdInTheBodyIsIgnoredAndBothShopsCanBookTheirOrderNumberOne() throws Exception {
+            String orderOfA = api.packedOrder(shopA.bearer(), "A-SHIP-1")[1];
+            String created = mockMvc.perform(post("/api/v1/orders/{id}/shipment", orderOfA).header("Authorization", shopA.bearer())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"provider\":\"MOCK\",\"shopId\":\"%s\"}".formatted(shopB.shopId())))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.orderNumber").value("SD-1"))
+                    .andReturn().getResponse().getContentAsString();
+            String shipmentOfA = com.sellerdesk.courier.CourierTestApi.id(created);
+
+            org.bson.Document saved = document("shipments", shipmentOfA);
+            assertThat(saved.get("shopId")).isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+            assertThat(saved.getString("merchantRef")).isNotEqualTo(document("shipments", shipmentOfB).getString("merchantRef"));
+            assertThat(document("shipments", shipmentOfB).getString("orderNumber")).isEqualTo("SD-1");
+            mockMvc.perform(get("/api/v1/shipments/{id}", shipmentOfA).header("Authorization", shopB.bearer()))
+                    .andExpect(status().isNotFound());
+        }
+
+        @Test
+        void webhookTakesTheShopFromTheShipmentNeverFromTheBody() throws Exception {
+            String orderOfA = api.packedOrder(shopA.bearer(), "A-SHIP-1")[1];
+            String shipmentOfA = com.sellerdesk.courier.CourierTestApi.id(api.sendOk(shopA.bearer(), orderOfA));
+            org.bson.Document orderOfABefore = document("orders", orderOfA);
+            org.bson.Document shipmentOfABefore = document("shipments", shipmentOfA);
+
+            // B's consignment, but the body names A's shop, A's order and A's shipment.
+            api.webhook(com.sellerdesk.courier.CourierTestApi.webhookJson("ev-cross", consignmentOfB, "picked_up",
+                            ",\"shopId\":\"%s\",\"orderId\":\"%s\",\"shipmentId\":\"%s\"".formatted(
+                                    shopA.shopId(), orderOfA, shipmentOfA)))
+                    .andExpect(status().isOk());
+
+            assertThat(document("orders", orderOfB).getString("status")).isEqualTo("SHIPPED");
+            assertThat(document("shipments", shipmentOfB).getString("status")).isEqualTo("PICKED_UP");
+            assertThat(document("orders", orderOfA)).isEqualTo(orderOfABefore);
+            assertThat(document("shipments", shipmentOfA)).isEqualTo(shipmentOfABefore);
+            // The stock movement was written in B's shop.
+            org.bson.Document deduct = mongoTemplate.findOne(new Query(Criteria.where("type").is("DEDUCT")),
+                    org.bson.Document.class, "stock_movements");
+            assertThat(deduct.get("shopId")).isEqualTo(new org.bson.types.ObjectId(shopB.shopId()));
+            assertThat(TenantContext.getShopId()).isNull();
+        }
+
+        @Test
+        void aShopsOrderIsNotBlockedByAnotherShopsActiveShipment() throws Exception {
+            // B's active shipment must not make A's manual ship / cancel look "booked".
+            String[] a = api.packedOrder(shopA.bearer(), "A-SHIP-1");
+            new com.sellerdesk.order.OrderTestApi(mockMvc).actionOk(shopA.bearer(), a[1], "ship");
+        }
+
+        private void assertNotFoundForA(MockHttpServletRequestBuilder request) throws Exception {
+            String responseBody = mockMvc.perform(request.header("Authorization", shopA.bearer()))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(responseBody).doesNotContain(shopB.shopId()).doesNotContain(consignmentOfB);
+        }
+
+        private org.bson.Document document(String collection, String id) {
+            return mongoTemplate.findById(new org.bson.types.ObjectId(id), org.bson.Document.class, collection);
+        }
+    }
+
     // ---- helpers ----------------------------------------------------------------------
 
     /**

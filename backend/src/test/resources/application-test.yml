@@ -19,3 +19,10 @@ sellerdesk:
   # the storage with FakeImageStorage anyway.
   cloudinary:
     url: cloudinary://000000000000000:test-only-secret@test-cloud
+  # Courier: the mock is on; tests run the jobs themselves (CourierJobs) instead of the schedule.
+  courier:
+    webhook-secret: test-only-courier-webhook-secret-0123456789
+    jobs-enabled: false
+    mock:
+      enabled: true
+      mode: OK

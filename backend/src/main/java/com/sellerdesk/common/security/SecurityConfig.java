@@ -63,6 +63,8 @@ public class SecurityConfig {
             // Staff invitation accept page (docs/modules/STAFF.md §3.5): the token is the proof.
             "/api/v1/auth/invitations/preview",
             "/api/v1/auth/invitations/accept",
+            // Courier webhooks (docs/modules/COURIER.md §5): no JWT, the courier's signature is the proof.
+            "/api/v1/webhooks/courier/*",
     };
 
     private final RestSecurityErrorHandler securityErrorHandler;

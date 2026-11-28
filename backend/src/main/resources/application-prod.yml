@@ -45,6 +45,12 @@ sellerdesk:
   cloudinary:
     url: ${CLOUDINARY_URL}
     required: true
+  courier:
+    # A real courier (later) needs COURIER_WEBHOOK_SECRET: the app refuses to start without it.
+    webhook-secret-required: true
+    mock:
+      # No pretend courier in production.
+      enabled: false
   refresh-cookie:
     # One service serves the app and the API, so the cookie is first-party. See docs/SECURITY.md §2.
     same-site: Strict

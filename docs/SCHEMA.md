@@ -364,7 +364,7 @@ Full design: `modules/ORDER.md` §2–§4 (built: `order.model.Order`). Summary:
 | `edits` | Array | Y | `{at, by, byName, fields, summary}`, last 50 |
 | `source` | String | Y | `FACEBOOK`, `MESSENGER`, `WHATSAPP`, `PHONE`, `OTHER` |
 | `note` | String | N | internal note, ≤ 1000 |
-| `shipping.courierName`, `shipping.trackingId` | String | N | free text (courier integration is Phase 2) |
+| `shipping.courierName`, `shipping.trackingId` | String | N | typed at `/ship`, or set by the courier module at pickup (courier name, tracking code) |
 | `cancelReason`, `returnReason` | String | N | |
 | `createdBy`, `createdByName` | | Y | |
 | `version`, `createdAt`, `updatedAt` | | Y | |
@@ -408,6 +408,51 @@ transaction with the stock and customer writes (`modules/ORDER.md` §6).
 
 ---
 
+## 9a. `shipments` (courier bookings, Phase 2)
+
+Full design: `modules/COURIER.md` §3 (built: `courier.model.Shipment`). Owner: `courier`. One
+document per booking attempt; a failed or cancelled booking stays as history. Inserted once, then
+only conditional updates that state the expected status.
+
+| Field | Type | Req | Notes |
+|-------|------|-----|-------|
+| `_id` | ObjectId | Y | also the `merchantRef` sent to the courier |
+| `shopId` | ObjectId | Y | |
+| `orderId` | ObjectId | Y | → `orders._id` |
+| `orderNumber` | String | Y | display snapshot, `SD-1042` |
+| `provider` | String | Y | `MOCK` (later `STEADFAST`, `PATHAO`) |
+| `merchantRef` | String | Y | `_id` as hex; the courier deduplicates bookings on it |
+| `consignmentId`, `trackingCode` | String | N | from the courier, set when `CREATED` |
+| `status` | String | Y | `BOOKING`, `CREATED`, `PICKED_UP`, `IN_TRANSIT`, `DELIVERED`, `RETURNED`, `CANCELLED`, `FAILED` |
+| `active` | Boolean | Y | `true` for `BOOKING` … `IN_TRANSIT`; for the partial indexes |
+| `codAmount` | Int64 | Y | poisha, copy of the order's `codAmount` |
+| `collectedAmount`, `courierFee` | Int64 | N | poisha, as reported by the courier |
+| `codMismatch` | Boolean | N | `collectedAmount ≠ codAmount` |
+| `recipient` | Object | Y | `{name, phone, address}` snapshot |
+| `note` | String | N | ≤ 200, for the rider |
+| `itemCount` | Int32 | Y | units in the parcel |
+| `bookingAttempts` | Int32 | Y | booking calls made |
+| `nextAttemptAt` | Date | N | `BOOKING` after a timeout: next retry |
+| `failureReason`, `needsManualCheck`, `cancelReason` | | N | |
+| `lastEventAt` | Date | N | last courier event or successful poll (tracking sweep) |
+| `lastTrackedAt` | Date | N | last call to the courier's track API (throttle) |
+| `events` | Array | Y | `{at, source, status, providerStatus, providerTime, eventKey, ignored, note}`, last 100 |
+| `createdBy`, `createdByName`, `version`, `createdAt`, `updatedAt` | | Y | |
+
+**Indexes:**
+- `{ shopId: 1, orderId: 1, createdAt: -1 }`: shipments of an order.
+- `{ shopId: 1, orderId: 1 }` **unique**, partial (`active: true`): one active shipment per order.
+- `{ shopId: 1, status: 1, updatedAt: -1 }`: `GET /shipments?status=`.
+- `{ provider: 1, consignmentId: 1 }` **unique**, partial (`consignmentId` exists): webhook routing.
+- `{ status: 1, nextAttemptAt: 1 }`, partial (`status: "BOOKING"`): booking reconciler.
+- `{ active: 1, lastEventAt: 1 }`, partial (`active: true`): tracking sweep.
+
+The last three do **not** start with `shopId`: the documented exception (§10). A webhook arrives
+without a tenant, and the two jobs run for all shops. Only `ShipmentRoutingRepository` uses them,
+and it returns only `(shipmentId, shopId)`.
+
+---
+
 ## 10. Indexes: how they are created
 
 Indexes are declared on model classes (`@Indexed`, `@CompoundIndex`) and created at startup
@@ -420,6 +465,10 @@ with `spring.data.mongodb.auto-index-creation: true`.
 Every tenant index starts with `shopId`. Reason: every tenant query filters by `shopId`
 (equality), and a compound index can only be used from its leftmost field. `shopId` first
 means each shop's data is one contiguous range in the index.
+
+**Exception:** three `shipments` indexes (§9a) serve lookups that have no tenant yet (courier
+webhooks find the shop through them) or that run for all shops (courier jobs). They are used
+only by `courier.repository.ShipmentRoutingRepository`, which returns ids, never shipment data.
 
 ---
 
@@ -437,8 +486,10 @@ means each shop's data is one contiguous range in the index.
 | Restock, manual stock adjustment | product stock; one movement (`modules/INVENTORY.md` §4) |
 | Shop registration | shop; owner user |
 | Staff invitation accept | new staff user; invitation `ACCEPTED` |
+| Courier status event (webhook / poll) | shipment status + event; order status, stock `DEDUCT` + movements (pickup), customer stats (delivery) (`modules/COURIER.md` §5) |
 
-Not needed: single-document updates (product edit, customer edit). One document write is
+Not needed: single-document updates (product edit, customer edit, shipment booking result:
+the courier call happens outside any transaction and its result is one conditional update). One document write is
 always atomic in MongoDB.
 
 ### How (Spring)

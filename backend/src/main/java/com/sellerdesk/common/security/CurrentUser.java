@@ -1,5 +1,6 @@
 package com.sellerdesk.common.security;
 
+import java.util.Optional;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
 import org.springframework.security.core.Authentication;
@@ -30,8 +31,19 @@ public class CurrentUser {
         return user;
     }
 
+    /** The user's id, or the reserved id of a {@link SystemActor} (webhook, job). */
     public String userId() {
-        return details().userId();
+        Optional<SystemActor> system = systemActor();
+        return system.isPresent() ? system.get().userId() : details().userId();
+    }
+
+    /**
+     * Present when the code runs inside {@link SystemActorScope} (courier webhook, background job)
+     * instead of a user's request. Services use its name for "who did it".
+     */
+    public Optional<SystemActor> systemActor() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getPrincipal() instanceof SystemActor actor ? Optional.of(actor) : Optional.empty();
     }
 
     /**

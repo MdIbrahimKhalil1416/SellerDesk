@@ -83,6 +83,29 @@ sellerdesk:
   cloudinary:
     url: ${CLOUDINARY_URL:}
     required: false
+  # Courier integration (docs/modules/COURIER.md). COURIER_WEBHOOK_SECRET signs courier webhooks
+  # (a secret, >= 32 characters). Empty is allowed in dev: every webhook is then rejected with 401.
+  courier:
+    webhook-secret: ${COURIER_WEBHOOK_SECRET:}
+    webhook-secret-required: false
+    # Booking reconciler (every minute) and tracking sweep (every hour).
+    jobs-enabled: true
+    reconcile-interval: PT1M
+    sweep-interval: PT1H
+    # For real couriers' HTTP calls.
+    connect-timeout: PT3S
+    read-timeout: PT10S
+    mock:
+      # The pretend courier "MOCK" (Phase 2 has no real courier yet). Off in prod.
+      enabled: ${COURIER_MOCK_ENABLED:true}
+      # OK | TIMEOUT | REJECT | FLAKY
+      mode: OK
+      simulator:
+        # Dev: moves mock parcels forward and sends signed webhooks to this app.
+        enabled: false
+        interval: PT30S
+        base-url: http://localhost:${server.port:8080}
+        return-percent: 10
 
 server:
   port: ${PORT:8080}

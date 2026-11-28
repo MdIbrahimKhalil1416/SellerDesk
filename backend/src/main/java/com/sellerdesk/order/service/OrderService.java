@@ -66,6 +66,8 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Orders (docs/modules/ORDER.md).
@@ -102,6 +104,8 @@ public class OrderService {
     private final TransactionRunner transactionRunner;
     private final ApplicationEventPublisher events;
     private final Clock clock;
+    /** Implemented by the courier module; empty if it is not there. */
+    private final List<ShipmentGuard> shipmentGuards;
 
     /** @param created false when the same {@code requestId} was sent before (the first order is returned) */
     public record CreateResult(OrderResponse order, boolean created) {
@@ -425,40 +429,7 @@ public class OrderService {
         String userId = currentUser.userId();
         String userName = userName(shopId, userId);
         try {
-            transactionRunner.run(() -> {
-                Order order = load(shopId, orderId);
-                if (order.getStatus() == action.to()) {
-                    return order;
-                }
-                if (!action.allowedFrom(order.getStatus())) {
-                    throw OrderErrors.invalidTransition(order.getStatus(), action);
-                }
-                OrderStatus from = order.getStatus();
-                Instant now = Instant.now(clock);
-                Update update = new Update()
-                        .set("status", action.to())
-                        .push("statusHistory", new StatusChange(from, action.to(), now, userId, userName, extras.historyNote()))
-                        .set("updatedAt", now);
-                if (extras.shipping() != null) {
-                    update.set("shipping", extras.shipping());
-                }
-                if (action == OrderAction.CANCEL) {
-                    update.set("cancelReason", extras.reason());
-                }
-                List<StockLine> restockLines = List.of();
-                if (action == OrderAction.RETURN) {
-                    update.set("returnReason", extras.reason());
-                    restockLines = returnLines(order, extras.restock(), update);
-                }
-                if (!queryRepository.updateIf(shopId, orderId, from, null, update)) {
-                    // Cannot happen inside the transaction (we just read it); a parallel change
-                    // would have been a write conflict, retried by the TransactionRunner.
-                    throw OrderErrors.staleVersion();
-                }
-                applySideEffects(order, action, from, restockLines);
-                events.publishEvent(new OrderStatusChangedEvent(shopId, orderId, from, action.to()));
-                return order;
-            });
+            transactionRunner.run(() -> transitionInTransaction(shopId, userId, userName, orderId, action, extras, true));
         } catch (AppException e) {
             if (action == OrderAction.CONFIRM && OrderErrors.INSUFFICIENT_STOCK.equals(e.getCode())) {
                 throw shortageReport(load(shopId, orderId), e);
@@ -466,6 +437,110 @@ public class OrderService {
             throw e;
         }
         return respond(load(shopId, orderId));
+    }
+
+    /**
+     * The body of one status change; runs inside the caller's transaction (a user's action via
+     * {@link #transition}, or a courier event via {@link #applyCourierEvent}).
+     *
+     * @param manual true for a user's action: then shipping and cancelling are refused while the
+     *               order is booked with a courier ({@link ShipmentGuard}, docs/modules/COURIER.md §6)
+     */
+    private Order transitionInTransaction(String shopId, String userId, String userName, String orderId,
+                                          OrderAction action, Extras extras, boolean manual) {
+        Order order = load(shopId, orderId);
+        if (order.getStatus() == action.to()) {
+            return order;
+        }
+        if (!action.allowedFrom(order.getStatus())) {
+            throw OrderErrors.invalidTransition(order.getStatus(), action);
+        }
+        if (manual && (action == OrderAction.SHIP || action == OrderAction.CANCEL)
+                && shipmentGuards.stream().anyMatch(g -> g.hasActiveShipment(shopId, orderId))) {
+            throw OrderErrors.shipmentActive(action);
+        }
+        OrderStatus from = order.getStatus();
+        Instant now = Instant.now(clock);
+        Update update = new Update()
+                .set("status", action.to())
+                .push("statusHistory", new StatusChange(from, action.to(), now, userId, userName, extras.historyNote()))
+                .set("updatedAt", now);
+        if (extras.shipping() != null) {
+            update.set("shipping", extras.shipping());
+        }
+        if (action == OrderAction.CANCEL) {
+            update.set("cancelReason", extras.reason());
+        }
+        List<StockLine> restockLines = List.of();
+        if (action == OrderAction.RETURN) {
+            update.set("returnReason", extras.reason());
+            restockLines = returnLines(order, extras.restock(), update);
+        }
+        if (!queryRepository.updateIf(shopId, orderId, from, null, update)) {
+            // Cannot happen inside the transaction (we just read it); a parallel change
+            // would have been a write conflict, retried by the TransactionRunner.
+            throw OrderErrors.staleVersion();
+        }
+        applySideEffects(order, action, from, restockLines);
+        events.publishEvent(new OrderStatusChangedEvent(shopId, orderId, from, action.to()));
+        return order;
+    }
+
+    // ==== Courier (docs/modules/COURIER.md §5) =============================================
+
+    /**
+     * What the courier module may read to book an order. Unknown or another shop's order → 404.
+     */
+    public OrderForCourier forCourier(String orderId) {
+        Order o = load(currentUser.shopId(), orderId);
+        int units = o.getItems().stream().mapToInt(OrderItem::getQuantity).sum();
+        return new OrderForCourier(o.getId(), o.displayNumber(), o.getStatus(), o.getCodAmount(),
+                o.getCustomer().name(), o.getCustomer().phone(), o.getCustomer().address(), units);
+    }
+
+    /**
+     * A courier status moves the order, <b>inside the caller's transaction</b> (the shipment update
+     * and the order change commit together). The shop and the "who" come from {@link CurrentUser},
+     * which the courier webhook fills with the shipment's shop and a courier system actor.
+     *
+     * <p>Never throws for "does not apply" (an order closed by hand, a cancelled order): it returns
+     * {@link CourierOrderEffect.Result#NOT_APPLICABLE} instead, because an exception here would
+     * mark the caller's whole transaction for rollback. Real failures (stock corruption) still
+     * throw and roll everything back.
+     *
+     * @param courierName  stored in {@code shipping.courierName} when the order ships
+     * @param trackingCode stored in {@code shipping.trackingId}
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public CourierOrderEffect.Result applyCourierEvent(String orderId, CourierOrderEffect effect, String courierName,
+                                                       String trackingCode) {
+        String shopId = currentUser.shopId();
+        String userId = currentUser.userId();
+        String userName = userName(shopId, userId);
+        OrderStatus status = load(shopId, orderId).getStatus();
+        Extras ship = new Extras(null, new Shipping(OrderRules.text(courierName), OrderRules.text(trackingCode)), null,
+                Map.of());
+        return switch (effect) {
+            case SHIP -> switch (status) {
+                case PACKED -> {
+                    transitionInTransaction(shopId, userId, userName, orderId, OrderAction.SHIP, ship, false);
+                    yield CourierOrderEffect.Result.APPLIED;
+                }
+                case SHIPPED, DELIVERED, RETURNED -> CourierOrderEffect.Result.ALREADY_DONE;
+                default -> CourierOrderEffect.Result.NOT_APPLICABLE;
+            };
+            case DELIVER -> switch (status) {
+                case PACKED, SHIPPED -> {
+                    if (status == OrderStatus.PACKED) {
+                        transitionInTransaction(shopId, userId, userName, orderId, OrderAction.SHIP, ship, false);
+                    }
+                    transitionInTransaction(shopId, userId, userName, orderId, OrderAction.DELIVER, Extras.note(null), false);
+                    yield CourierOrderEffect.Result.APPLIED;
+                }
+                case DELIVERED -> CourierOrderEffect.Result.ALREADY_DONE;
+                default -> CourierOrderEffect.Result.NOT_APPLICABLE;
+            };
+        };
     }
 
     /** Stock and customer counters for one transition. Runs inside the transaction. */
@@ -797,6 +872,11 @@ public class OrderService {
     }
 
     private String userName(String shopId, String userId) {
+        // Inside a courier webhook / job: the system actor's name ("Courier (Mock courier)").
+        var system = currentUser.systemActor();
+        if (system.isPresent()) {
+            return system.get().name();
+        }
         return userService.findInShop(userId, shopId).map(User::getName).orElse("Unknown user");
     }
 }

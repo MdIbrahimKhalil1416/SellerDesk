@@ -88,7 +88,7 @@ class OrderServiceTest {
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
     private final OrderService service = new OrderService(orderRepository, queryRepository, new OrderMapper(currentUser),
             productService, inventoryService, customerService, shopService, settingsLookup, userService, currentUser,
-            transactionRunner, events, Clock.fixed(NOW, ZoneOffset.UTC));
+            transactionRunner, events, Clock.fixed(NOW, ZoneOffset.UTC), java.util.List.of());
 
     @BeforeEach
     @SuppressWarnings("unchecked")

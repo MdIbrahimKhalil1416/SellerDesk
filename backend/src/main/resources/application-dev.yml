@@ -20,6 +20,11 @@ sellerdesk:
     # Plain http on localhost cannot use Secure cookies.
     same-site: Strict
     secure: false
+  courier:
+    mock:
+      simulator:
+        # Plays the courier: parcels move forward every 30 s via signed webhooks (needs COURIER_WEBHOOK_SECRET).
+        enabled: true
 
 logging:
   level:

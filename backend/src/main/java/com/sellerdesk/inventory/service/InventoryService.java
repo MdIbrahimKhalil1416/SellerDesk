@@ -375,6 +375,11 @@ public class InventoryService {
     }
 
     private String userName(String shopId, String userId) {
+        // Inside a courier webhook / job: the system actor's name ("Courier (Mock courier)").
+        var system = currentUser.systemActor();
+        if (system.isPresent()) {
+            return system.get().name();
+        }
         return userService.findInShop(userId, shopId).map(User::getName).orElse("Unknown user");
     }
 
