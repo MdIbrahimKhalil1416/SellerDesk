@@ -1,4 +1,5 @@
-/** Image limits, the same as the backend (docs/modules/PRODUCT.md §4). */
+/** Image upload limits, the same as the backend (docs/modules/PRODUCT.md §4). Used for product photos and the shop logo. */
+/** Photos per product. */
 export const MAX_IMAGES = 8
 export const MAX_IMAGE_MB = 5
 export const MAX_IMAGE_BYTES = MAX_IMAGE_MB * 1024 * 1024

@@ -5,10 +5,10 @@ import { Alert } from '../../../components/ui/Alert'
 import { ConfirmDialog } from '../../../components/ui/ConfirmDialog'
 import { cn } from '../../../lib/cn'
 import type { Product, ProductImage } from '../../../types/product'
-import { checkImageFile, MAX_IMAGES, MAX_IMAGE_MB } from '../imageFiles'
+import { checkImageFile, MAX_IMAGES, MAX_IMAGE_MB } from '../../../lib/imageFiles'
 import { productErrorMessage } from '../productErrors'
 import { useLatestVersion, useStoreProduct } from '../queries'
-import { thumbnailUrl } from '../imageUrl'
+import { thumbnailUrl } from '../../../lib/imageUrl'
 
 interface Upload {
   id: number

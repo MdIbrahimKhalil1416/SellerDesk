@@ -8,6 +8,7 @@ import { DashboardPage } from '../features/dashboard/DashboardPage'
 import { ProductCreatePage } from '../features/products/ProductCreatePage'
 import { ProductEditPage } from '../features/products/ProductEditPage'
 import { ProductListPage } from '../features/products/ProductListPage'
+import { SettingsPage } from '../features/settings/SettingsPage'
 import { AcceptInvitePage } from '../features/staff/AcceptInvitePage'
 import { StaffPage } from '../features/staff/StaffPage'
 import { AppLayout } from '../layouts/AppLayout'
@@ -52,6 +53,9 @@ export function AppRoutes() {
           </Route>
           <Route element={<RequirePermission permission="STAFF_MANAGE" />}>
             <Route path="/staff" element={<StaffPage />} />
+          </Route>
+          <Route element={<RequirePermission permission="SHOP_SETTINGS" />}>
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Route>
       </Route>

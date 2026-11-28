@@ -1,8 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { NavLink, Outlet } from 'react-router'
+import { NavLink, Outlet, useLocation } from 'react-router'
 import { BoxIcon, CloseIcon, HomeIcon, LogoutIcon, MenuIcon, OrdersIcon, SettingsIcon, ShieldIcon, UsersIcon } from '../components/icons'
 import { Spinner } from '../components/ui/Spinner'
 import { useAuth } from '../features/auth/authContext'
+import { useShop } from '../features/settings/queries'
+import { thumbnailUrl } from '../lib/imageUrl'
 import { usePermissions } from '../features/auth/usePermissions'
 import type { Permission } from '../types/auth'
 import { cn } from '../lib/cn'
@@ -21,7 +23,7 @@ const NAV: NavItem[] = [
   { label: 'Products', to: '/products', icon: <BoxIcon />, permission: 'PRODUCT_VIEW' },
   { label: 'Customers', icon: <UsersIcon /> },
   { label: 'Staff', to: '/staff', icon: <ShieldIcon />, permission: 'STAFF_MANAGE' },
-  { label: 'Settings', icon: <SettingsIcon /> },
+  { label: 'Settings', to: '/settings', icon: <SettingsIcon />, permission: 'SHOP_SETTINGS' },
 ]
 
 /**
@@ -30,6 +32,16 @@ const NAV: NavItem[] = [
  */
 export function AppLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const { pathname } = useLocation()
+
+  // Close the drawer on every page change, also when a page navigates by itself
+  // (e.g. "Leave" in an unsaved-changes dialog after a sidebar click). Done during render with
+  // the "previous value" pattern instead of an effect, so there is no extra render.
+  const [lastPathname, setLastPathname] = useState(pathname)
+  if (pathname !== lastPathname) {
+    setLastPathname(pathname)
+    setDrawerOpen(false)
+  }
 
   useEffect(() => {
     if (!drawerOpen) return
@@ -88,7 +100,7 @@ export function AppLayout() {
 
 /** @param onNavigate called when a link is clicked (closes the mobile drawer) */
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const { shop } = useAuth()
+  const shopName = useShopName()
   const { can } = usePermissions()
   const items = NAV.filter((item) => !item.permission || can(item.permission))
 
@@ -96,7 +108,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col">
       <div className="border-b border-slate-200 px-5 py-4">
         <div className="text-lg font-semibold text-indigo-600">SellerDesk</div>
-        {shop && <div className="truncate text-sm text-slate-500">{shop.name}</div>}
+        {shopName && <div className="truncate text-sm text-slate-500">{shopName}</div>}
       </div>
       <nav className="flex-1 space-y-1 p-3" aria-label="Main">
         {items.map((item) =>
@@ -129,7 +141,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
-  const { user, shop, logout } = useAuth()
+  const { user, logout } = useAuth()
+  const shopName = useShopName()
+  const logoUrl = thumbnailUrl(useShop().data?.logoUrl ?? null, 36)
   const [loggingOut, setLoggingOut] = useState(false)
 
   async function onLogout() {
@@ -150,8 +164,9 @@ function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
         <button type="button" onClick={onOpenMenu} className="-ml-2 rounded-md p-2 text-slate-600 hover:bg-slate-100 lg:hidden" aria-label="Open menu">
           <MenuIcon />
         </button>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-slate-900">{shop?.name ?? 'SellerDesk'}</p>
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          {logoUrl && <img src={logoUrl} alt="" className="h-9 w-9 shrink-0 rounded-lg border border-slate-200 object-cover" />}
+          <p className="truncate text-sm font-semibold text-slate-900">{shopName ?? 'SellerDesk'}</p>
         </div>
         <div className="flex items-center gap-3">
           <div className="hidden text-right sm:block">
@@ -174,4 +189,14 @@ function TopBar({ onOpenMenu }: { onOpenMenu: () => void }) {
       </div>
     </header>
   )
+}
+
+/**
+ * The shop name from GET /shop (updated right after saving settings), falling back to the one
+ * from /auth/me while that loads. null for PLATFORM_ADMIN.
+ */
+function useShopName(): string | null {
+  const { shop } = useAuth()
+  const details = useShop()
+  return details.data?.name ?? shop?.name ?? null
 }

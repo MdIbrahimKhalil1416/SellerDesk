@@ -1,6 +1,6 @@
 import { ImageIcon } from '../../../components/icons'
 import { cn } from '../../../lib/cn'
-import { thumbnailUrl } from '../imageUrl'
+import { thumbnailUrl } from '../../../lib/imageUrl'
 
 /** Square cover image, or a grey placeholder when the product has no photo. */
 export function ProductThumb({ url, size = 48, className }: { url: string | null; size?: number; className?: string }) {
