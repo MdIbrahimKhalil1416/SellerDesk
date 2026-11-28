@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
-import { BoxIcon, CloseIcon, HomeIcon, LogoutIcon, MenuIcon, OrdersIcon, SettingsIcon, ShieldIcon, UsersIcon } from '../components/icons'
+import { BoxIcon, CloseIcon, HomeIcon, LayersIcon, LogoutIcon, MenuIcon, OrdersIcon, SettingsIcon, ShieldIcon, UsersIcon } from '../components/icons'
 import { Spinner } from '../components/ui/Spinner'
 import { useAuth } from '../features/auth/authContext'
 import { useShop } from '../features/settings/queries'
@@ -21,6 +21,7 @@ const NAV: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: <HomeIcon /> },
   { label: 'Orders', icon: <OrdersIcon /> },
   { label: 'Products', to: '/products', icon: <BoxIcon />, permission: 'PRODUCT_VIEW' },
+  { label: 'Inventory', to: '/inventory', icon: <LayersIcon />, permission: 'STOCK_VIEW' },
   { label: 'Customers', icon: <UsersIcon /> },
   { label: 'Staff', to: '/staff', icon: <ShieldIcon />, permission: 'STAFF_MANAGE' },
   { label: 'Settings', to: '/settings', icon: <SettingsIcon />, permission: 'SHOP_SETTINGS' },

@@ -15,6 +15,9 @@ import java.util.Map;
  *
  * @param name   blank = go back to the default name from the attributes
  * @param active {@code false} deactivates the variant (variants are never deleted)
+ * @param useShopDefaultThreshold {@code true} removes the variant's own {@code lowStockThreshold},
+ *        so the shop's {@code defaultLowStockThreshold} applies again. Not together with
+ *        {@code lowStockThreshold}.
  */
 public record UpdateVariantRequest(
         @Size(max = ProductRules.MAX_VARIANT_NAME) String name,
@@ -31,6 +34,8 @@ public record UpdateVariantRequest(
         @Min(0) @Max(ProductRules.MAX_LOW_STOCK_THRESHOLD) Integer lowStockThreshold,
 
         Boolean active,
+
+        Boolean useShopDefaultThreshold,
 
         @NotNull Long version) {
 }

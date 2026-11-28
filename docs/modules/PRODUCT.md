@@ -175,7 +175,8 @@ Base `/api/v1`. Shop always from the JWT.
 CreateProductRequest  {name, description?, category?, variants: [VariantRequest] (1–100)}
 VariantRequest        {sku, name?, attributes?, price, costPrice?, lowStockThreshold?}
 UpdateProductRequest  {name, description?, category?, version}
-UpdateVariantRequest  {name?, attributes?, price?, costPrice?, lowStockThreshold?, active?, version}
+UpdateVariantRequest  {name?, attributes?, price?, costPrice?, lowStockThreshold?,
+                       useShopDefaultThreshold? (true = $unset own threshold), active?, version}
 ProductStatusRequest  {status, version}
 ReorderImagesRequest  {imageIds, version}
 
@@ -203,7 +204,7 @@ form gets `409 CONCURRENT_MODIFICATION` instead of overwriting someone else's ch
   used, or any variant has `onHand > 0` or `reserved > 0` (safety check).
 - **`ProductUsageChecker`** — interface in `product.service`:
   `boolean isUsed(String shopId, String productId)`. `inventory` (any stock movement) and
-  `order` (any order item) implement it when they are built; `ProductService` injects
+  `order` (any order item) implement it (Inventory: `InventoryUsageChecker`, built; Order: when built); `ProductService` injects
   `List<ProductUsageChecker>` (empty until then). This is *dependency inversion*: product
   defines the question, the other modules answer it, so the dependency still points
   `order / inventory → product` (`ARCHITECTURE.md` §1).

@@ -5,6 +5,8 @@ import { RegisterPage } from '../features/auth/RegisterPage'
 import { ResetPasswordPage } from '../features/auth/ResetPasswordPage'
 import { VerifyEmailPage } from '../features/auth/VerifyEmailPage'
 import { DashboardPage } from '../features/dashboard/DashboardPage'
+import { InventoryPage } from '../features/inventory/InventoryPage'
+import { VariantStockPage } from '../features/inventory/VariantStockPage'
 import { ProductCreatePage } from '../features/products/ProductCreatePage'
 import { ProductEditPage } from '../features/products/ProductEditPage'
 import { ProductListPage } from '../features/products/ProductListPage'
@@ -50,6 +52,11 @@ export function AppRoutes() {
           </Route>
           <Route element={<RequirePermission permission="PRODUCT_EDIT" />}>
             <Route path="/products/new" element={<ProductCreatePage />} />
+          </Route>
+          {/* Without STOCK_ADJUST the pages are read-only (no Restock / Adjust buttons). */}
+          <Route element={<RequirePermission permission="STOCK_VIEW" />}>
+            <Route path="/inventory" element={<InventoryPage />} />
+            <Route path="/inventory/variants/:variantId" element={<VariantStockPage />} />
           </Route>
           <Route element={<RequirePermission permission="STAFF_MANAGE" />}>
             <Route path="/staff" element={<StaffPage />} />

@@ -14,6 +14,13 @@ export const HomeIcon = () => (
     <path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" />
   </Icon>
 )
+/** Stacked layers: stock / inventory. */
+export const LayersIcon = () => (
+  <Icon>
+    <path d="m12 3 9 5-9 5-9-5z" />
+    <path d="m3 13 9 5 9-5M3 17.5l9 5 9-5" />
+  </Icon>
+)
 export const OrdersIcon = () => (
   <Icon>
     <path d="M6 2h12l2 4v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6z" />

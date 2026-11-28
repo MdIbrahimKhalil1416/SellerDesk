@@ -6,7 +6,8 @@
 auth pages, the Product & Variant module (backend and frontend, Cloudinary images) and the
 Staff & Permission module (invitations, roles, permissions; backend and frontend) and shop
 settings (profile, logo, delivery charges, order prefix; backend and frontend) are built.
-Inventory, customers and orders are next.
+The Inventory module (stock levels, movement log, low stock, restock / adjust; backend and
+frontend) is built too. Customers and orders are next.
 See [docs/SCOPE.md](docs/SCOPE.md).
 
 ## What it is

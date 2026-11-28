@@ -3,8 +3,8 @@
 Stock levels per variant and the stock movement log. Inventory is the **only** module that
 changes stock numbers; every change writes exactly one movement entry in the same transaction.
 
-Status: **designed, not built**. Backend package `com.sellerdesk.inventory`, frontend
-`features/inventory` (separate task, after the backend).
+Status: **built** (backend and frontend). Backend package `com.sellerdesk.inventory` (+ `common.transaction`), frontend
+`features/inventory` (`/inventory`, `/inventory/variants/:variantId`).
 
 Related: `SCHEMA.md` §6 (`products.variants[].stock`), §7 (`stock_movements`), §11
 (transactions); `API.md` §5; `SECURITY.md` §3 (`STOCK_VIEW`, `STOCK_ADJUST`);
@@ -66,20 +66,26 @@ Built in the implementation step, listed here so nothing is forgotten:
    is "used" if any movement exists for `{shopId, productId}`. `ProductService` already injects
    all checkers, so delete then returns `409 PRODUCT_IN_USE`.
 3. **`common.transaction.TransactionRunner`** (new): `run(Supplier<T>)` uses the existing
-   `TransactionTemplate` bean (`common/config/MongoConfig.java`) and retries the whole block up
-   to 3 times (10–50 ms random pause) when the cause chain contains a `MongoException` with the
-   error label `TransientTransactionError` or `UnknownTransactionCommitResult`. Any other error
-   is not retried. Spring's `@Transactional` never retries by itself (`SCHEMA.md` §11).
+   `TransactionTemplate` bean (`common/config/MongoConfig.java`) and runs the whole block again
+   when the cause chain contains a `MongoException` with the error label
+   `TransientTransactionError` or `UnknownTransactionCommitResult`, after a random pause
+   ("full jitter", up to 100 ms). No new attempt starts after **10 s** (safety cap 50 attempts).
+   The budget is time-based, like the driver's own `withTransaction` (120 s): conflicting
+   transactions on one document commit one after the other, and against a remote Atlas cluster
+   one transaction takes a few hundred milliseconds. Any other error is not retried. Spring's `@Transactional` never retries by itself (`SCHEMA.md` §11).
    Why a full retry is safe: after "commit result unknown" the first attempt may have committed.
    Every operation that runs in it is idempotent: restock/adjust through `requestId`, order
    operations through the order's status condition (a second run finds the order already moved
    and stops).
 4. **Integers only in JSON**: Jackson's default `ACCEPT_FLOAT_AS_INT = true` silently turns
    `2.5` into `2`. Set `spring.jackson.deserialization.accept-float-as-int: false` in
-   `application.yml`, so `2.5` → `400 VALIDATION_FAILED` everywhere (no other DTO expects
-   decimals: money is integer poisha).
-5. `ProductQueryRepository.deleteIfUnstocked` already refuses products with stock > 0. No change.
-6. Docs: `SCHEMA.md` §7, §9 and §11 and `API.md` §5 now point here and use these type names.
+   `application.yml`, so `2.5` → `400 MALFORMED_REQUEST` everywhere (the JSON cannot be read
+   into the DTO; no other DTO expects decimals: money is integer poisha).
+5. **No version bump from stock writes**: `MongoTemplate.findAndModify(..., Product.class)`
+   increments the entity's `@Version` field on its own. `StockRepository.applyChange` therefore
+   runs `findAndModify` against the raw collection (`Document.class`) and converts the result.
+6. `ProductQueryRepository.deleteIfUnstocked` already refuses products with stock > 0. No change.
+7. Docs: `SCHEMA.md` §7, §9 and §11 and `API.md` §5 now point here and use these type names.
 
 ---
 
@@ -193,17 +199,19 @@ the stored movement.
 ### Order operations (Java API, used by the Order module)
 
 ```java
-// all: @Transactional(propagation = MANDATORY), shopId from CurrentUser via the caller
-List<StockMovement> reserve(String shopId, List<StockLine> lines, OrderRef order)
-List<StockMovement> release(String shopId, List<StockLine> lines, OrderRef order)
-List<StockMovement> deduct (String shopId, List<StockLine> lines, OrderRef order)
-List<StockMovement> restockReturn(String shopId, List<StockLine> lines, OrderRef order)
+// all: @Transactional(propagation = MANDATORY); shop and user come from CurrentUser (the JWT),
+// so the Order module cannot pass a wrong shop by mistake
+List<StockMovement> reserve(List<StockLine> lines, OrderRef order)
+List<StockMovement> release(List<StockLine> lines, OrderRef order)
+List<StockMovement> deduct(List<StockLine> lines, OrderRef order)
+List<StockMovement> restockReturn(List<StockLine> lines, OrderRef order)
 
 record StockLine(String variantId, int quantity)
 record OrderRef(String orderId, String orderNumber)
 ```
 
-Lines with the same `variantId` are merged first (one update per variant).
+Lines with the same `variantId` are merged first (one update per variant). Called without a
+transaction → `IllegalTransactionStateException` (a programming error).
 
 ---
 
@@ -256,7 +264,8 @@ one shop's products. Fine for a few thousand variants per shop.
 
 | Situation | Status | `code` |
 |-----------|--------|--------|
-| Bean Validation (quantity range, `quantityChange = 0`, missing `reasonCode`, `OTHER` without note, decimal number, bad UUID) | 400 | `VALIDATION_FAILED` (`fieldErrors`) |
+| Bean Validation (quantity range, `quantityChange = 0`, missing `reasonCode`, `OTHER` without note, bad UUID, unknown query value) | 400 | `VALIDATION_FAILED` (`fieldErrors`) |
+| Decimal number for a quantity, unknown `reasonCode` in the body, broken JSON | 400 | `MALFORMED_REQUEST` |
 | Variant id unknown **or from another shop** | 404 | `NOT_FOUND` |
 | Decrease / reserve / release / deduct more than allowed | 409 | `INSUFFICIENT_STOCK` (message names SKU, requested, available) |
 | Increase above 1,000,000 on hand | 409 | `STOCK_LIMIT_EXCEEDED` |
@@ -271,7 +280,7 @@ one shop's products. Fine for a few thousand variants per shop.
 ## 6. Rules
 
 - **Quantities are whole numbers.** `quantity` ≥ 1, `quantityChange` ≠ 0, both ≤ 100,000 in
-  absolute value. JSON `2.5` → `400` (§2 change 4).
+  absolute value. JSON `2.5` → `400 MALFORMED_REQUEST` (§2 change 4).
 - **No change may make stock negative**: decreases need `available ≥ q`, so `onHand` and
   `reserved` stay ≥ 0 and `reserved ≤ onHand`.
 - **`reasonCode` is required for `ADJUSTMENT`**; `note` (trimmed, ≤ 200) is required when it is `OTHER`.
@@ -318,13 +327,15 @@ Nothing points back.
 - effective threshold: variant value wins, `null` → shop default; status boundaries
   (`available` 0 → `OUT`; = threshold → `LOW`; threshold + 1 → `IN_STOCK`; threshold 0 → never `LOW`);
 - repositories are always called with the `TenantContext` shop;
-- `TransactionRunner` retries a `TransientTransactionError` up to 3 times, then gives up;
-  never retries other exceptions (e.g. `INSUFFICIENT_STOCK`).
+- `TransactionRunner` retries `TransientTransactionError` / `UnknownTransactionCommitResult`,
+  gives up at the attempt cap or time budget, never retries other exceptions (e.g. `INSUFFICIENT_STOCK`).
 
 **Integration** (`InventoryIntegrationTest extends MongoIntegrationTestBase`):
 - restock and adjustment: stock numbers and `*After` values correct; movement written;
 - decrease below `available` → `409`, stock and log unchanged;
-- rollback: movement insert forced to fail (spy) → the `$inc` is rolled back, stock unchanged;
+- rollback: movement insert forced to fail (a `collMod` schema validator rejects the document)
+  → the `$inc` is rolled back, stock unchanged; a short second item rolls back the first item's
+  reservation; order operations without a transaction are refused;
 - product edit / add variant / reorder images after a stock change → stock intact; inventory
   writes leave the product `version` unchanged;
 - low-stock list: variant threshold vs shop default; changing `defaultLowStockThreshold` via
@@ -336,16 +347,22 @@ Nothing points back.
 
 **Concurrency** (real MongoDB, threads released together by a `CountDownLatch`):
 - **Last unit:** stock `{1, 0, 1}`, 10 threads each run
-  `transactionRunner.run(() -> inventoryService.reserve(shopId, [line(V, 1)], order_i))`
+  `transactionRunner.run(() -> inventoryService.reserve([line(V, 1)], order_i))`
   → exactly **1** succeeds, **9** get `INSUFFICIENT_STOCK`; final stock `{1, 1, 0}`; exactly
   **1** `RESERVE` movement.
 - 5 parallel `ADJUSTMENT −1` on `available = 3` → exactly 3 succeed; `available = 0`.
-- 20 parallel restocks of `+1` on a new variant → `onHand = 20`; the 20 `onHandAfter` values are
-  exactly 1…20; exactly one `INITIAL`.
+- 8 parallel restocks of `+1` on a new variant → `onHand = 8`; the 8 `onHandAfter` values are
+  exactly 1…8; exactly one `INITIAL` (8, not more: each conflicting transaction must wait for the
+  previous commit, which over a remote test cluster costs a few hundred ms each).
 - 5 parallel restocks with the **same** `requestId` → one movement, `onHand` increased once.
 
-**Permissions:** `PACKER`, `MODERATOR`, `ACCOUNTANT` (have `STOCK_VIEW`) can read but get `403`
-on restock / adjustment; a user without `STOCK_VIEW` gets `403` on reads; `PLATFORM_ADMIN` → `403`.
+**Controller** (`InventoryControllerTest`): `PACKER`, `MODERATOR`, `ACCOUNTANT` (have
+`STOCK_VIEW`) can read but get `403` on restock / adjustment; staff granted `STOCK_ADJUST` can
+write; without `STOCK_VIEW` reads are `403`; `PLATFORM_ADMIN` → `403`; no token → `401`.
+Validation: quantity range, missing / malformed `requestId`, note length, `quantityChange = 0`,
+`OTHER` without note, missing `reasonCode` (`VALIDATION_FAILED` with the field); decimals and
+unknown enum values (`MALFORMED_REQUEST`); bad query parameters; malformed / unknown / product
+id as variant id → `404`; unknown body fields (`type`, `onHand`) ignored.
 
 **`TenantIsolationTest` → `@Nested class Inventory`** (`assertHiddenFromOtherShop`):
 - A with B's `variantId` → `404` on `GET /inventory/variants/{id}`, `POST .../restock`,

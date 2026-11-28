@@ -358,7 +358,7 @@ class ProductServiceTest {
             when(queryRepository.modify(eq(SHOP), eq("p1"), any(), any())).thenReturn(Optional.of(p));
             String variantId = p.getVariants().get(1).getVariantId();
 
-            service.updateVariant("p1", variantId, new UpdateVariantRequest(null, null, null, null, null, false, 2L));
+            service.updateVariant("p1", variantId, new UpdateVariantRequest(null, null, null, null, null, false, null, 2L));
 
             ArgumentCaptor<Update> update = ArgumentCaptor.forClass(Update.class);
             ArgumentCaptor<Criteria> condition = ArgumentCaptor.forClass(Criteria.class);
@@ -379,7 +379,7 @@ class ProductServiceTest {
             when(queryRepository.modify(eq(SHOP), eq("p1"), any(), any())).thenReturn(Optional.of(p));
 
             service.updateVariant("p1", p.getVariants().getFirst().getVariantId(),
-                    new UpdateVariantRequest(null, null, null, null, null, false, 2L));
+                    new UpdateVariantRequest(null, null, null, null, null, false, null, 2L));
 
             ArgumentCaptor<Update> update = ArgumentCaptor.forClass(Update.class);
             verify(queryRepository).modify(eq(SHOP), eq("p1"), any(), update.capture());
@@ -393,7 +393,7 @@ class ProductServiceTest {
             when(queryRepository.modify(eq(SHOP), eq("p1"), any(), any())).thenReturn(Optional.of(p));
 
             service.updateVariant("p1", p.getVariants().getFirst().getVariantId(),
-                    new UpdateVariantRequest(null, attrs("Color", "Red", "Size", "L"), null, null, null, null, 2L));
+                    new UpdateVariantRequest(null, attrs("Color", "Red", "Size", "L"), null, null, null, null, null, 2L));
 
             assertThat(setOfLastModify()).containsEntry("variants.$.name", "Red / L");
         }
@@ -406,7 +406,7 @@ class ProductServiceTest {
             when(queryRepository.modify(eq(SHOP), eq("p1"), any(), any())).thenReturn(Optional.of(p));
 
             service.updateVariant("p1", p.getVariants().getFirst().getVariantId(),
-                    new UpdateVariantRequest(null, attrs("Color", "Red", "Size", "L"), 50_000L, null, null, null, 2L));
+                    new UpdateVariantRequest(null, attrs("Color", "Red", "Size", "L"), 50_000L, null, null, null, null, 2L));
 
             assertThat(setOfLastModify()).containsEntry("variants.$.name", "Special")
                     .containsEntry("variants.$.price", 50_000L);
@@ -420,7 +420,7 @@ class ProductServiceTest {
             givenProduct(p);
 
             assertThatThrownBy(() -> service.updateVariant("p1", old.getVariantId(),
-                    new UpdateVariantRequest(null, null, null, null, null, true, 2L)))
+                    new UpdateVariantRequest(null, null, null, null, null, true, null, 2L)))
                     .isInstanceOf(AppException.class).extracting("code").isEqualTo("DUPLICATE_VARIANT_ATTRIBUTES");
         }
 
@@ -428,10 +428,10 @@ class ProductServiceTest {
         void unknownVariantIs404() {
             givenProduct(product());
             assertThatThrownBy(() -> service.updateVariant("p1", new ObjectId().toHexString(),
-                    new UpdateVariantRequest("x", null, null, null, null, null, 2L)))
+                    new UpdateVariantRequest("x", null, null, null, null, null, null, 2L)))
                     .isInstanceOf(ResourceNotFoundException.class);
             assertThatThrownBy(() -> service.updateVariant("p1", "not-an-id",
-                    new UpdateVariantRequest("x", null, null, null, null, null, 2L)))
+                    new UpdateVariantRequest("x", null, null, null, null, null, null, 2L)))
                     .isInstanceOf(ResourceNotFoundException.class);
         }
 
@@ -439,7 +439,7 @@ class ProductServiceTest {
         void unknownProductIs404() {
             when(productRepository.findByIdAndShopId("p1", SHOP)).thenReturn(Optional.empty());
             assertThatThrownBy(() -> service.updateVariant("p1", new ObjectId().toHexString(),
-                    new UpdateVariantRequest("x", null, null, null, null, null, 2L)))
+                    new UpdateVariantRequest("x", null, null, null, null, null, null, 2L)))
                     .isInstanceOf(ResourceNotFoundException.class);
         }
     }

@@ -97,7 +97,7 @@ Full spec, errors and decisions: `docs/modules/PRODUCT.md`.
 | PUT | `/products/{id}` | `PRODUCT_EDIT` | `{name, description?, category?, version}` → `ProductResponse`. Product fields only. |
 | PATCH | `/products/{id}/status` | `PRODUCT_EDIT` | `{status: ACTIVE or ARCHIVED, version}` → `ProductResponse`. Archived products cannot be added to new orders. |
 | POST | `/products/{id}/variants` | `PRODUCT_EDIT` | `{sku, name?, attributes?, price, costPrice?, lowStockThreshold?, version}` → `201 ProductResponse` |
-| PATCH | `/products/{id}/variants/{variantId}` | `PRODUCT_EDIT` | `{name?, attributes?, price?, costPrice?, lowStockThreshold?, active?, version}` → `ProductResponse`. SKU and stock cannot be changed. |
+| PATCH | `/products/{id}/variants/{variantId}` | `PRODUCT_EDIT` | `{name?, attributes?, price?, costPrice?, lowStockThreshold?, useShopDefaultThreshold?, active?, version}` → `ProductResponse`. SKU and stock cannot be changed. `useShopDefaultThreshold: true` removes the variant's own threshold (the shop's `defaultLowStockThreshold` applies again); together with `lowStockThreshold` → `400`. |
 | POST | `/products/{id}/images` | `PRODUCT_EDIT` | multipart `file` (JPEG/PNG/WebP, ≤ 5 MB, ≤ 8 per product) → `201 ProductResponse`. `400 IMAGE_TYPE_NOT_ALLOWED`, `413 IMAGE_TOO_LARGE`, `409 IMAGE_LIMIT_REACHED`, `502 IMAGE_UPLOAD_FAILED`. |
 | DELETE | `/products/{id}/images/{imageId}` | `PRODUCT_EDIT` | → `ProductResponse`. File deleted from Cloudinary. |
 | PUT | `/products/{id}/images/order` | `PRODUCT_EDIT` | `{imageIds[], version}` → `ProductResponse`. First image = cover. |
@@ -126,7 +126,18 @@ return) have no endpoint; they happen inside order status changes.
 | GET | `/inventory/movements` | `STOCK_VIEW` | `?variantId=&productId=&type=&reasonCode=&orderId=&from=&to=&page=&size=` → page of `MovementResponse {id, productId, variantId, sku, variantName, type, onHandDelta, reservedDelta, onHandAfter, reservedAfter, availableAfter, reasonCode, note, orderId, orderNumber, createdBy{id, name}, createdAt}`, newest first |
 
 A repeated `requestId` returns the first result without applying the change again; the same
-`requestId` with a different change → `409 REQUEST_ID_REUSED`. Another shop's `variantId` → `404`.
+`requestId` with a different change → `409 REQUEST_ID_REUSED`. Another shop's `variantId` (or a
+malformed one) → `404 NOT_FOUND`; an id filter of another shop on `/movements` → empty page.
+
+The threshold is the variant's own `lowStockThreshold`, else the shop's
+`settings.defaultLowStockThreshold`. `stockStatus`: `OUT` if `available ≤ 0`, `LOW` if
+`0 < available ≤ threshold`, else `IN_STOCK`.
+
+Errors: `400 VALIDATION_FAILED` (`fieldErrors`: `quantity`, `quantityChange`, `reasonCode`,
+`note`, `requestId`, query parameters), `400 MALFORMED_REQUEST` (decimal quantity, unknown
+`reasonCode`), `403 FORBIDDEN` (`STOCK_VIEW` / `STOCK_ADJUST` missing), `404 NOT_FOUND`,
+`409 INSUFFICIENT_STOCK` (message names SKU, requested and available), `409 STOCK_LIMIT_EXCEEDED`
+(more than 1,000,000 on hand), `409 REQUEST_ID_REUSED`.
 
 ---
 

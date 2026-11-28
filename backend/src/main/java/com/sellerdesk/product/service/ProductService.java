@@ -69,7 +69,7 @@ public class ProductService {
     private final CurrentUser currentUser;
     private final ApplicationEventPublisher events;
     private final ImageCleanupTasks cleanupTasks;
-    /** Empty until Inventory / Order provide implementations. */
+    /** Inventory (InventoryUsageChecker) and later Order answer "is this product used?". */
     private final List<ProductUsageChecker> usageCheckers;
     private final Clock clock;
 
@@ -233,6 +233,11 @@ public class ProductService {
         Product product = load(shopId, productId);
         Variant current = findVariant(product, variantId);
         requireVersion(product, request.version());
+        boolean resetThreshold = Boolean.TRUE.equals(request.useShopDefaultThreshold());
+        if (resetThreshold && request.lowStockThreshold() != null) {
+            throw new FieldValidationException("useShopDefaultThreshold",
+                    "cannot be sent together with lowStockThreshold");
+        }
 
         Map<String, String> attributes = request.attributes() != null
                 ? ProductRules.normalizeAttributes(request.attributes())
@@ -255,8 +260,8 @@ public class ProductService {
         changed.setAttributes(attributes);
         changed.setPrice(request.price() != null ? request.price() : current.getPrice());
         changed.setCostPrice(request.costPrice() != null ? request.costPrice() : current.getCostPrice());
-        changed.setLowStockThreshold(request.lowStockThreshold() != null
-                ? request.lowStockThreshold() : current.getLowStockThreshold());
+        changed.setLowStockThreshold(resetThreshold ? null
+                : request.lowStockThreshold() != null ? request.lowStockThreshold() : current.getLowStockThreshold());
         changed.setActive(request.active() != null ? request.active() : current.isActive());
 
         List<Variant> all = product.getVariants().stream()
@@ -273,10 +278,11 @@ public class ProductService {
                 .set("variants.$.attributes", changed.getAttributes())
                 .set("variants.$.price", changed.getPrice())
                 .set("variants.$.costPrice", changed.getCostPrice())
-                .set("variants.$.lowStockThreshold", changed.getLowStockThreshold())
                 .set("variants.$.active", changed.isActive())
                 .set("minPrice", range[0])
                 .set("maxPrice", range[1]);
+        // null = no own threshold: the field is removed, so the shop default applies.
+        setOrUnset(update, "variants.$.lowStockThreshold", changed.getLowStockThreshold());
         return apply(shopId, productId, request.version(), condition, update,
                 () -> notFoundOrStale(shopId, productId));
     }

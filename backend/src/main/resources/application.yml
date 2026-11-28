@@ -52,6 +52,12 @@ spring:
       max-file-size: 5MB
       max-request-size: 6MB
 
+  # Quantities and money are whole numbers (poisha, units). Jackson would otherwise turn 2.5 into 2
+  # without complaint; with this, a decimal for an int/long field is a 400 (docs/modules/INVENTORY.md §6).
+  jackson:
+    deserialization:
+      accept-float-as-int: false
+
   cache:
     type: caffeine
     caffeine:

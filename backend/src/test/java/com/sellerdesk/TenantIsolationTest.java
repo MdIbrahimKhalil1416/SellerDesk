@@ -344,7 +344,7 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
      * }
      * }</pre>
      *
-     * Modules still to add: Inventory, Customers, Orders. Done: {@link Products}, {@link Staff}.
+     * Modules still to add: Customers, Orders. Done: {@link Products}, {@link Staff}, {@link Inventory}.
      */
     @Nested
     class CrossTenantById {
@@ -669,6 +669,121 @@ class TenantIsolationTest extends MongoIntegrationTestBase {
 
             assertThat(lookup.forShop(shopB.shopId()).orderNumberPrefix()).isEqualTo("BBB");
             assertThat(lookup.forShop(shopA.shopId()).orderNumberPrefix()).isEqualTo("SD");
+        }
+    }
+
+    // ==== 9. Inventory ==================================================================
+
+    /**
+     * Stock and movements (docs/modules/INVENTORY.md §8). The variant id in the path is the only
+     * id the inventory endpoints take; B's id must look exactly like an unknown one to A.
+     */
+    @Nested
+    class Inventory {
+
+        private ProductTestApi products;
+        private com.sellerdesk.inventory.InventoryTestApi inventory;
+        private String productOfB;
+        private String variantOfB;
+
+        @BeforeEach
+        void shopBHasStock() throws Exception {
+            products = new ProductTestApi(mockMvc);
+            inventory = new com.sellerdesk.inventory.InventoryTestApi(mockMvc);
+            String created = products.createOk(shopB.bearer(), ProductTestApi.productJson("Beta Socks", null, "B-SOCK-1"));
+            productOfB = ProductTestApi.id(created);
+            variantOfB = ProductTestApi.variantId(created, 0);
+            inventory.restockOk(shopB.bearer(), variantOfB, 3); // 3 available: also "low" for B
+        }
+
+        @Test
+        void otherShopsVariantIsNotFoundOnEveryIdEndpointAndNothingIsWritten() throws Exception {
+            org.bson.Document before = document("products", productOfB);
+            long movementsBefore = mongoTemplate.count(new Query(), "stock_movements");
+
+            assertHiddenFromOtherShop("/api/v1/inventory/variants/" + variantOfB);
+            assertNotFoundForA(com.sellerdesk.inventory.InventoryTestApi.restockRequest(variantOfB,
+                    com.sellerdesk.inventory.InventoryTestApi.restockJson(5, java.util.UUID.randomUUID().toString())));
+            assertNotFoundForA(com.sellerdesk.inventory.InventoryTestApi.adjustRequest(variantOfB,
+                    com.sellerdesk.inventory.InventoryTestApi.adjustJson(-1, "LOST", null, java.util.UUID.randomUUID().toString())));
+
+            assertThat(document("products", productOfB)).isEqualTo(before);
+            assertThat(mongoTemplate.count(new Query(), "stock_movements")).isEqualTo(movementsBefore);
+        }
+
+        @Test
+        void listsLowStockAndHistoryShowOnlyOwnData() throws Exception {
+            String created = products.createOk(shopA.bearer(), ProductTestApi.productJson("Alpha Socks", null, "A-SOCK-1"));
+            String variantOfA = ProductTestApi.variantId(created, 0);
+            inventory.restockOk(shopA.bearer(), variantOfA, 2);
+
+            String list = body(get("/api/v1/inventory?includeInactive=true").header("Authorization", shopA.bearer()));
+            assertThat(list).contains("A-SOCK-1").doesNotContain("B-SOCK-1").doesNotContain(variantOfB)
+                    .contains("\"totalElements\":1");
+            String low = body(get("/api/v1/inventory/low-stock").header("Authorization", shopA.bearer()));
+            assertThat(low).contains("A-SOCK-1").doesNotContain("B-SOCK-1");
+            String history = body(get("/api/v1/inventory/movements").header("Authorization", shopA.bearer()));
+            assertThat(history).contains("A-SOCK-1").doesNotContain("B-SOCK-1").contains("\"totalElements\":1");
+
+            // Search and filters with B's SKU / ids: empty, never B's rows.
+            for (String url : new String[] {
+                    "/api/v1/inventory?q=B-SOCK-1", "/api/v1/inventory?q=beta",
+                    "/api/v1/inventory/movements?variantId=" + variantOfB,
+                    "/api/v1/inventory/movements?productId=" + productOfB}) {
+                assertThat(body(get(url).header("Authorization", shopA.bearer()))).as(url)
+                        .contains("\"totalElements\":0").doesNotContain("B-SOCK-1");
+            }
+        }
+
+        @Test
+        void shopIdAndProductIdInTheBodyAreIgnored() throws Exception {
+            String created = products.createOk(shopA.bearer(), ProductTestApi.productJson("Alpha Cap", null, "A-CAP-1"));
+            String productOfA = ProductTestApi.id(created);
+            String variantOfA = ProductTestApi.variantId(created, 0);
+            org.bson.Document bBefore = document("products", productOfB);
+
+            String json = ("{\"quantity\":4,\"shopId\":\"%s\",\"productId\":\"%s\",\"variantId\":\"%s\","
+                    + "\"requestId\":\"%s\"}").formatted(shopB.shopId(), productOfB, variantOfB, java.util.UUID.randomUUID());
+            mockMvc.perform(com.sellerdesk.inventory.InventoryTestApi.restockRequest(variantOfA, json)
+                            .header("Authorization", shopA.bearer()))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.movement.productId").value(productOfA))
+                    .andExpect(jsonPath("$.movement.variantId").value(variantOfA));
+
+            org.bson.Document movement = mongoTemplate.findOne(new Query(Criteria.where("variantId")
+                    .is(new org.bson.types.ObjectId(variantOfA))), org.bson.Document.class, "stock_movements");
+            assertThat(movement.get("shopId")).isEqualTo(new org.bson.types.ObjectId(shopA.shopId()));
+            assertThat(document("products", productOfB)).isEqualTo(bBefore);
+        }
+
+        @Test
+        void aRequestIdUsedByShopBDoesNotBlockShopA() throws Exception {
+            String requestId = java.util.UUID.randomUUID().toString();
+            mockMvc.perform(com.sellerdesk.inventory.InventoryTestApi.restockRequest(variantOfB,
+                            com.sellerdesk.inventory.InventoryTestApi.restockJson(1, requestId))
+                            .header("Authorization", shopB.bearer()))
+                    .andExpect(status().isCreated());
+
+            String variantOfA = ProductTestApi.variantId(
+                    products.createOk(shopA.bearer(), ProductTestApi.productJson("Alpha Hat", null, "A-HAT-1")), 0);
+            mockMvc.perform(com.sellerdesk.inventory.InventoryTestApi.restockRequest(variantOfA,
+                            com.sellerdesk.inventory.InventoryTestApi.restockJson(1, requestId))
+                            .header("Authorization", shopA.bearer()))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.movement.variantId").value(variantOfA))
+                    .andExpect(jsonPath("$.movement.type").value("INITIAL"));
+        }
+
+        private void assertNotFoundForA(MockHttpServletRequestBuilder request) throws Exception {
+            String responseBody = mockMvc.perform(request.header("Authorization", shopA.bearer()))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(responseBody).doesNotContain(shopB.shopId()).doesNotContain("B-SOCK-1");
+        }
+
+        private org.bson.Document document(String collection, String id) {
+            return mongoTemplate.findById(new org.bson.types.ObjectId(id), org.bson.Document.class, collection);
         }
     }
 

@@ -246,7 +246,7 @@ becomes a bottleneck, stock can move to its own `inventory_items` collection.
 
 ## 7. `stock_movements` (append-only log)
 
-Full design: `modules/INVENTORY.md` §3–§4. Summary:
+Full design: `modules/INVENTORY.md` §3–§4 (built: `inventory.model.StockMovement`). Summary:
 
 | Field | Type | Req | Notes |
 |-------|------|-----|-------|
@@ -438,7 +438,7 @@ always atomic in MongoDB.
 | Limitation | Effect | Our handling |
 |------------|--------|--------------|
 | Requires a **replica set** | A plain standalone `mongod` cannot run transactions. | Atlas clusters (including free M0) are replica sets. Tests use Testcontainers `MongoDBContainer`, which starts a single-node replica set. Local Docker Mongo must be started with `--replSet`. |
-| **No lock waiting**: concurrent writes to the same document fail fast with `WriteConflict` (`TransientTransactionError`) | Two orders confirming the same variant at the same moment: one aborts. | Retry the whole transaction up to 3 times on `TransientTransactionError` / `UnknownTransactionCommitResult`. Spring's `@Transactional` does **not** retry by itself (unlike the driver's `withTransaction`), so a small retry wrapper (`common.transaction.TransactionRunner`, `modules/INVENTORY.md` §2) runs the service call again. |
+| **No lock waiting**: concurrent writes to the same document fail fast with `WriteConflict` (`TransientTransactionError`) | Two orders confirming the same variant at the same moment: one aborts. | Retry the whole transaction on `TransientTransactionError` / `UnknownTransactionCommitResult` (random pause, at most 10 s / 50 attempts). Spring's `@Transactional` does **not** retry by itself (unlike the driver's `withTransaction`), so a small retry wrapper (`common.transaction.TransactionRunner`, `modules/INVENTORY.md` §2) runs the service call again. |
 | Default **60 s** max lifetime | Long transactions are aborted. | Keep transactions small: only DB writes; send emails and do slow work after commit. |
 | Slower than single-document writes | Extra round-trips, more server memory. | Use only where listed above. |
 | `@Transactional` works only through the Spring proxy | Calling a `@Transactional` method from the same class skips the transaction. | Transactional methods are public service methods called from controllers or other services. |
